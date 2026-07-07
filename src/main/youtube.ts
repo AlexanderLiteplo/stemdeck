@@ -18,7 +18,16 @@ async function findBin(candidates: string[], versionArg: string): Promise<string
     const ok = await new Promise<boolean>((resolve) => {
       execFile(bin, [versionArg], { timeout: 15000 }, (err) => resolve(!err))
     })
-    if (ok) return bin
+    if (!ok) continue
+    if (path.isAbsolute(bin)) return bin
+    // Resolve bare names to an absolute path so callers can path.dirname() it
+    // (passing a relative dir to --ffmpeg-location silently breaks yt-dlp).
+    const resolved = await new Promise<string | null>((resolve) => {
+      execFile('which', [bin], { timeout: 5000 }, (err, stdout) =>
+        resolve(err ? null : stdout.trim() || null)
+      )
+    })
+    return resolved ?? bin
   }
   return null
 }
@@ -59,7 +68,7 @@ export async function downloadYoutubeAudio(
     'after_move:filepath',
     printFile
   ]
-  if (ffmpeg) {
+  if (ffmpeg && path.isAbsolute(ffmpeg)) {
     // Convert to mp3 when ffmpeg is available; otherwise keep the native
     // audio container (m4a/webm), which Chromium can still decode.
     args.push('-x', '--audio-format', 'mp3', '--audio-quality', '0')
