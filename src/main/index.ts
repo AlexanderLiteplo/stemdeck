@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
-import { promises as fs } from 'fs'
+import { promises as fs, existsSync } from 'fs'
 import path from 'path'
 import { findSeparatorBin, getCachedStems, separateStems, STEM_MODELS } from './stems'
 
@@ -71,6 +71,27 @@ function registerIpc(): void {
       }
     })
   )
+
+  const libraryFile = (): string => path.join(app.getPath('userData'), 'library.json')
+
+  ipcMain.handle('library:load', async () => {
+    try {
+      const raw = await fs.readFile(libraryFile(), 'utf8')
+      const data = JSON.parse(raw)
+      if (Array.isArray(data.tracks)) {
+        data.tracks = data.tracks.filter(
+          (t: { path?: string }) => typeof t.path === 'string' && existsSync(t.path)
+        )
+      }
+      return data
+    } catch {
+      return null
+    }
+  })
+
+  ipcMain.handle('library:save', async (_event, data: unknown) => {
+    await fs.writeFile(libraryFile(), JSON.stringify(data), 'utf8')
+  })
 
   ipcMain.handle('recording:save', async (event, data: ArrayBuffer) => {
     const win = BrowserWindow.fromWebContents(event.sender)

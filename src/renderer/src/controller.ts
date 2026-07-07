@@ -14,7 +14,7 @@ import {
   useStore,
   type TrackInfo
 } from './state/store'
-import type { StemPaths } from './types'
+import type { PersistedLibrary, PersistedTrack, StemPaths } from './types'
 
 /** Waveform peak data lives outside the store (too big for React state). */
 export const trackPeaks = new Map<string, WaveformPeaks>()
@@ -36,9 +36,83 @@ export async function initApp(): Promise<void> {
     stemModels: models,
     stemEngine: { ...stemEngine, checked: true }
   })
+  await restoreLibrary()
   window.stemdeck.onStemProgress(({ trackPath, line }) => {
     const track = useStore.getState().library.find((t) => t.path === trackPath)
     if (track) updateTrack(track.id, { stemStatus: line.slice(0, 120) })
+  })
+}
+
+// ---------- Library persistence ----------
+
+function encodePeaks(peaks: WaveformPeaks): string {
+  const u8 = new Uint8Array(peaks.data.buffer, peaks.data.byteOffset, peaks.data.byteLength)
+  let binary = ''
+  const CHUNK = 8192
+  for (let i = 0; i < u8.length; i += CHUNK) {
+    binary += String.fromCharCode(...u8.subarray(i, i + CHUNK))
+  }
+  return btoa(binary)
+}
+
+function decodePeaks(encoded: string): WaveformPeaks {
+  const binary = atob(encoded)
+  const u8 = new Uint8Array(binary.length)
+  for (let i = 0; i < binary.length; i++) u8[i] = binary.charCodeAt(i)
+  const data = new Float32Array(u8.buffer)
+  return { data, buckets: data.length / 2 }
+}
+
+/** Persist the analyzed library so tracks survive app restarts. */
+export async function saveLibrary(): Promise<void> {
+  const { library, selectedModel } = useStore.getState()
+  const tracks: PersistedTrack[] = library
+    .filter((t) => !t.analyzing)
+    .map((t) => {
+      const peaks = trackPeaks.get(t.id)
+      return {
+        path: t.path,
+        name: t.name,
+        duration: t.duration,
+        bpm: t.bpm,
+        firstBeat: t.firstBeat,
+        peaks: peaks ? encodePeaks(peaks) : null,
+        stems: t.stems
+      }
+    })
+  const data: PersistedLibrary = { version: 1, selectedModel, tracks }
+  await window.stemdeck.saveLibrary(data)
+}
+
+async function restoreLibrary(): Promise<void> {
+  const data = (await window.stemdeck.loadLibrary()) as PersistedLibrary | null
+  if (!data || data.version !== 1 || !Array.isArray(data.tracks)) return
+  const tracks: TrackInfo[] = []
+  for (const saved of data.tracks) {
+    const id = `track-${trackCounter++}`
+    if (saved.peaks) {
+      try {
+        trackPeaks.set(id, decodePeaks(saved.peaks))
+      } catch {
+        // corrupt peaks — waveform will just be empty until re-added
+      }
+    }
+    tracks.push({
+      id,
+      path: saved.path,
+      name: saved.name,
+      duration: saved.duration,
+      bpm: saved.bpm,
+      firstBeat: saved.firstBeat,
+      analyzing: false,
+      stems: saved.stems,
+      separating: false,
+      stemStatus: ''
+    })
+  }
+  useStore.setState({
+    library: tracks,
+    selectedModel: data.selectedModel || useStore.getState().selectedModel
   })
 }
 
@@ -91,6 +165,7 @@ async function analyzeTrack(track: TrackInfo, model: string): Promise<void> {
     updateTrack(track.id, { duration: buffer.duration, stems: cached })
     const { bpm, firstBeat } = await analyzeBpm(buffer)
     updateTrack(track.id, { bpm, firstBeat, analyzing: false })
+    void saveLibrary()
   } catch (err) {
     updateTrack(track.id, { analyzing: false })
     showToast(`Failed to analyze ${track.name}: ${(err as Error).message}`)
@@ -341,6 +416,7 @@ export async function separateTrack(trackId: string): Promise<void> {
   try {
     const stems: StemPaths = await window.stemdeck.separateStems(track.path, selectedModel)
     updateTrack(trackId, { separating: false, stems, stemStatus: '' })
+    void saveLibrary()
     showToast(`Stems ready for ${track.name}`)
   } catch (err) {
     updateTrack(trackId, { separating: false, stemStatus: '' })

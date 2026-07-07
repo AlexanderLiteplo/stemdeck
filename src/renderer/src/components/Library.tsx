@@ -1,4 +1,10 @@
-import { addDroppedFiles, addTracksFromDialog, loadTrackToDeck, separateTrack } from '../controller'
+import {
+  addDroppedFiles,
+  addTracksFromDialog,
+  loadTrackToDeck,
+  saveLibrary,
+  separateTrack
+} from '../controller'
 import { useStore } from '../state/store'
 
 function formatDuration(seconds: number): string {
@@ -33,7 +39,10 @@ export function Library() {
           Stem model{' '}
           <select
             value={selectedModel}
-            onChange={(e) => useStore.setState({ selectedModel: e.target.value })}
+            onChange={(e) => {
+              useStore.setState({ selectedModel: e.target.value })
+              void saveLibrary()
+            }}
           >
             {Object.entries(stemModels).map(([file, info]) => (
               <option key={file} value={file}>

@@ -32,7 +32,9 @@ const api = {
     return () => ipcRenderer.removeListener('stems:progress', listener)
   },
   saveRecording: (data: ArrayBuffer): Promise<string | null> =>
-    ipcRenderer.invoke('recording:save', data)
+    ipcRenderer.invoke('recording:save', data),
+  loadLibrary: (): Promise<unknown> => ipcRenderer.invoke('library:load'),
+  saveLibrary: (data: unknown): Promise<void> => ipcRenderer.invoke('library:save', data)
 }
 
 export type StemDeckApi = typeof api

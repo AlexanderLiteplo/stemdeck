@@ -21,6 +21,25 @@ export interface StemDeckApi {
   separateStems(trackPath: string, model: string): Promise<StemPaths>
   onStemProgress(callback: (event: StemProgressEvent) => void): () => void
   saveRecording(data: ArrayBuffer): Promise<string | null>
+  loadLibrary(): Promise<unknown>
+  saveLibrary(data: unknown): Promise<void>
+}
+
+export interface PersistedTrack {
+  path: string
+  name: string
+  duration: number
+  bpm: number
+  firstBeat: number
+  /** Base64-encoded Float32Array of waveform min/max pairs. */
+  peaks: string | null
+  stems: StemPaths | null
+}
+
+export interface PersistedLibrary {
+  version: 1
+  selectedModel: string
+  tracks: PersistedTrack[]
 }
 
 declare global {
