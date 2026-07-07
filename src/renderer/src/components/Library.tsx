@@ -112,7 +112,13 @@ export function Library() {
             {library.map((track) => (
               <tr key={track.id}>
                 <td className="track-name">{track.name}</td>
-                <td>
+                <td
+                  title={
+                    track.bpmConfidence > 0
+                      ? `Beat tracker confidence ${track.bpmConfidence.toFixed(2)} / 5.32`
+                      : 'Detected with fallback estimator'
+                  }
+                >
                   {track.analyzing ? '…' : track.bpm ? track.bpm.toFixed(1) : '—'}{' '}
                   {!track.analyzing && (
                     <button

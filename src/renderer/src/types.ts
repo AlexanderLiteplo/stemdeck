@@ -34,6 +34,9 @@ export interface PersistedTrack {
   duration: number
   bpm: number
   firstBeat: number
+  bpmConfidence?: number
+  /** Analysis pipeline version; older tracks are re-analyzed on startup. */
+  v?: number
   /** Base64-encoded Float32Array of waveform min/max pairs. */
   peaks: string | null
   stems: StemPaths | null

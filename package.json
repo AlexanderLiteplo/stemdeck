@@ -17,6 +17,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json"
   },
   "dependencies": {
+    "essentia.js": "^0.1.3",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "soundtouchjs": "^0.3.0",

@@ -23,6 +23,9 @@ export const deckHiPeaks: (WaveformPeaks | null)[] = [null, null]
 
 let trackCounter = 0
 
+/** Bump when the BPM pipeline changes; older library entries re-analyze on startup. */
+const ANALYSIS_VERSION = 2
+
 export async function initApp(): Promise<void> {
   await engine.init()
   engine.decks.forEach((deck, i) => {
@@ -38,6 +41,7 @@ export async function initApp(): Promise<void> {
     stemEngine: { ...stemEngine, checked: true }
   })
   await restoreLibrary()
+  void migrateStaleAnalyses()
   window.stemdeck.onStemProgress(({ trackPath, line }) => {
     const track = useStore.getState().library.find((t) => t.path === trackPath)
     if (track) updateTrack(track.id, { stemStatus: line.slice(0, 120) })
@@ -106,6 +110,8 @@ export async function saveLibrary(): Promise<void> {
         duration: t.duration,
         bpm: t.bpm,
         firstBeat: t.firstBeat,
+        bpmConfidence: t.bpmConfidence,
+        v: t.analysisV,
         peaks: peaks ? encodePeaks(peaks) : null,
         stems: t.stems
       }
@@ -134,6 +140,8 @@ async function restoreLibrary(): Promise<void> {
       duration: saved.duration,
       bpm: saved.bpm,
       firstBeat: saved.firstBeat,
+      bpmConfidence: saved.bpmConfidence ?? 0,
+      analysisV: saved.v ?? 0,
       analyzing: false,
       stems: saved.stems,
       separating: false,
@@ -144,6 +152,20 @@ async function restoreLibrary(): Promise<void> {
     library: tracks,
     selectedModel: data.selectedModel || useStore.getState().selectedModel
   })
+}
+
+/** Re-analyze tracks saved by an older BPM pipeline, one at a time. */
+async function migrateStaleAnalyses(): Promise<void> {
+  const stale = useStore
+    .getState()
+    .library.filter((t) => t.analysisV < ANALYSIS_VERSION)
+    .map((t) => t.id)
+  if (stale.length === 0) return
+  showToast(`Upgrading BPM analysis for ${stale.length} track${stale.length > 1 ? 's' : ''}…`)
+  for (const trackId of stale) {
+    await reanalyzeTrack(trackId)
+  }
+  showToast('BPM analysis upgrade complete ✓')
 }
 
 // ---------- Library ----------
@@ -176,6 +198,8 @@ async function addTrackPaths(paths: string[]): Promise<void> {
       duration: 0,
       bpm: 0,
       firstBeat: 0,
+      bpmConfidence: 0,
+      analysisV: 0,
       analyzing: true,
       stems: null,
       separating: false,
@@ -193,8 +217,14 @@ async function analyzeTrack(track: TrackInfo, model: string): Promise<void> {
     trackPeaks.set(track.id, computePeaks(buffer))
     const cached = await window.stemdeck.getCachedStems(track.path, model)
     updateTrack(track.id, { duration: buffer.duration, stems: cached })
-    const { bpm, firstBeat } = await analyzeBpm(buffer)
-    updateTrack(track.id, { bpm, firstBeat, analyzing: false })
+    const { bpm, firstBeat, confidence } = await analyzeBpm(buffer)
+    updateTrack(track.id, {
+      bpm,
+      firstBeat,
+      bpmConfidence: confidence,
+      analysisV: ANALYSIS_VERSION,
+      analyzing: false
+    })
     void saveLibrary()
   } catch (err) {
     updateTrack(track.id, { analyzing: false })

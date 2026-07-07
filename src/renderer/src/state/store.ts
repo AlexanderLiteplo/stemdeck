@@ -8,6 +8,10 @@ export interface TrackInfo {
   duration: number
   bpm: number
   firstBeat: number
+  /** Beat-tracker confidence [0, 5.32]; 0 = fallback detector. */
+  bpmConfidence: number
+  /** Version of the analysis pipeline that produced bpm/firstBeat. */
+  analysisV: number
   analyzing: boolean
   stems: StemPaths | null
   separating: boolean

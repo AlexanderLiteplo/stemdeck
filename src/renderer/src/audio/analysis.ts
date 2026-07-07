@@ -1,5 +1,11 @@
 import type { BpmResult } from './bpm'
 
+export interface BpmAnalysis extends BpmResult {
+  /** Multifeature confidence in [0, 5.32]; 0 when the fallback detector was used. */
+  confidence: number
+  engine: string
+}
+
 export interface WaveformPeaks {
   /** Interleaved [min, max] pairs per bucket, values in [-1, 1]. */
   data: Float32Array
@@ -65,23 +71,28 @@ export function mixdownMono(buffer: AudioBuffer): Float32Array {
 
 let worker: Worker | null = null
 let requestCounter = 0
-const pending = new Map<string, (result: BpmResult) => void>()
+const pending = new Map<string, (result: BpmAnalysis) => void>()
 
 function getWorker(): Worker {
   if (!worker) {
     worker = new Worker(new URL('./bpm.worker.ts', import.meta.url), { type: 'module' })
-    worker.onmessage = (e: MessageEvent<BpmResult & { id: string }>) => {
+    worker.onmessage = (e: MessageEvent<BpmAnalysis & { id: string }>) => {
       const resolve = pending.get(e.data.id)
       if (resolve) {
         pending.delete(e.data.id)
-        resolve({ bpm: e.data.bpm, firstBeat: e.data.firstBeat })
+        resolve({
+          bpm: e.data.bpm,
+          firstBeat: e.data.firstBeat,
+          confidence: e.data.confidence,
+          engine: e.data.engine
+        })
       }
     }
   }
   return worker
 }
 
-export function analyzeBpm(buffer: AudioBuffer): Promise<BpmResult> {
+export function analyzeBpm(buffer: AudioBuffer): Promise<BpmAnalysis> {
   const mono = mixdownMono(buffer)
   const id = `bpm-${requestCounter++}`
   return new Promise((resolve) => {

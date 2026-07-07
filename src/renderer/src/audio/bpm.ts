@@ -185,7 +185,11 @@ function refineCandidate(
   return { bpm: bestBpm, comb: bestComb }
 }
 
-export function detectBpm(mono: Float32Array, sampleRate: number): BpmResult {
+export function detectBpm(
+  mono: Float32Array,
+  sampleRate: number,
+  extraCandidatesBpm: number[] = []
+): BpmResult {
   // Analyze the middle of the track, where the groove is steadiest.
   const analyzeSamples = Math.min(mono.length, ANALYZE_SECONDS * sampleRate)
   const startSample = Math.max(0, Math.floor((mono.length - analyzeSamples) / 2))
@@ -238,6 +242,10 @@ export function detectBpm(mono: Float32Array, sampleRate: number): BpmResult {
     if (!candidates.some((c) => Math.abs(c - bpm) / bpm < 0.03)) candidates.push(bpm)
   }
   for (const peak of peaks.slice(0, 4)) pushCandidate((60 * hopsPerSecond) / peak.lag)
+  // External candidates (e.g. Essentia's estimate) compete on comb score too
+  for (const bpm of extraCandidatesBpm) {
+    if (bpm > 0 && Number.isFinite(bpm)) pushCandidate(bpm)
+  }
   if (candidates.length === 0) return { bpm: 0, firstBeat: 0 }
 
   // Fine-tune each candidate; the comb score decides
