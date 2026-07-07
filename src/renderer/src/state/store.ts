@@ -39,7 +39,8 @@ export interface DeckState {
   pitchRange: number
   pitch: number
   keylock: boolean
-  reverb: boolean
+  /** Reverb wet amount in [0, 1]. */
+  reverb: number
   cuePoint: number
   hotCues: (number | null)[]
   loop: LoopState
@@ -83,7 +84,7 @@ export const emptyDeck = (): DeckState => ({
   pitchRange: 0.16,
   pitch: 0,
   keylock: false,
-  reverb: false,
+  reverb: 0,
   cuePoint: 0,
   hotCues: [null, null, null, null],
   loop: { active: false, start: 0, end: 0 },

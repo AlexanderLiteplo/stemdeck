@@ -5,7 +5,7 @@ import {
   cuePress,
   cyclePitchRange,
   jumpBars,
-  toggleReverb,
+  setReverb,
   hotCuePress,
   loopExit,
   loopIn,
@@ -22,6 +22,7 @@ import {
 } from '../controller'
 import { useStore } from '../state/store'
 import { Fader } from './Fader'
+import { Knob } from './Knob'
 import { Waveform } from './Waveform'
 
 function formatTime(seconds: number): string {
@@ -131,13 +132,15 @@ export function DeckView({ deckIndex }: { deckIndex: number }) {
             >
               KEYLOCK
             </button>
-            <button
-              className={`toggle ${deck.reverb ? 'active' : ''}`}
-              onClick={() => toggleReverb(deckIndex)}
-              title="Reverb send on this deck"
-            >
-              REVERB
-            </button>
+            <Knob
+              label="REVERB"
+              size={36}
+              min={0}
+              max={1}
+              defaultValue={0}
+              value={deck.reverb}
+              onChange={(v) => setReverb(deckIndex, v)}
+            />
             <div className="key-shift" title="Key shift in semitones (keylock only)">
               <button
                 disabled={!deck.keylock}

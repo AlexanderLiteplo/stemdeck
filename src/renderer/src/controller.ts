@@ -201,6 +201,15 @@ async function analyzeTrack(track: TrackInfo, model: string): Promise<void> {
   }
 }
 
+/** Re-run BPM/waveform analysis (e.g. after detector improvements). */
+export async function reanalyzeTrack(trackId: string): Promise<void> {
+  const { library, selectedModel } = useStore.getState()
+  const track = library.find((t) => t.id === trackId)
+  if (!track || track.analyzing) return
+  updateTrack(trackId, { analyzing: true })
+  await analyzeTrack({ ...track, analyzing: true }, selectedModel)
+}
+
 // ---------- Deck loading ----------
 
 export async function loadTrackToDeck(
@@ -211,8 +220,15 @@ export async function loadTrackToDeck(
   const track = useStore.getState().library.find((t) => t.id === trackId)
   if (!track) return
   const deck = engine.decks[deckIndex]
-  const { pitchRange } = useStore.getState().decks[deckIndex]
-  updateDeck(deckIndex, { ...emptyDeck(), pitchRange, loading: true, trackId, title: track.name })
+  const { pitchRange, reverb } = useStore.getState().decks[deckIndex]
+  updateDeck(deckIndex, {
+    ...emptyDeck(),
+    pitchRange,
+    reverb,
+    loading: true,
+    trackId,
+    title: track.name
+  })
   try {
     let stems: LoadedStem[]
     if (withStems && track.stems) {
@@ -337,11 +353,9 @@ export function cyclePitchRange(deckIndex: number): void {
   updateDeck(deckIndex, { pitchRange: next, tempo: clamped })
 }
 
-export function toggleReverb(deckIndex: number): void {
-  const state = useStore.getState().decks[deckIndex]
-  const next = !state.reverb
-  engine.decks[deckIndex].setReverb(next ? 0.45 : 0)
-  updateDeck(deckIndex, { reverb: next })
+export function setReverb(deckIndex: number, amount: number): void {
+  engine.decks[deckIndex].setReverb(amount)
+  updateDeck(deckIndex, { reverb: amount })
 }
 
 /** Momentary pitch bend for beat alignment; call with 0 to release. */

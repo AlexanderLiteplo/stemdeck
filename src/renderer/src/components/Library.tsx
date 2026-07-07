@@ -4,6 +4,7 @@ import {
   addTracksFromDialog,
   addYoutubeTrack,
   loadTrackToDeck,
+  reanalyzeTrack,
   saveLibrary,
   separateTrack
 } from '../controller'
@@ -111,7 +112,18 @@ export function Library() {
             {library.map((track) => (
               <tr key={track.id}>
                 <td className="track-name">{track.name}</td>
-                <td>{track.analyzing ? '…' : track.bpm ? track.bpm.toFixed(1) : '—'}</td>
+                <td>
+                  {track.analyzing ? '…' : track.bpm ? track.bpm.toFixed(1) : '—'}{' '}
+                  {!track.analyzing && (
+                    <button
+                      className="mini-btn"
+                      title="Re-detect BPM"
+                      onClick={() => void reanalyzeTrack(track.id)}
+                    >
+                      ↻
+                    </button>
+                  )}
+                </td>
                 <td>{formatDuration(track.duration)}</td>
                 <td>
                   {track.stems ? (
