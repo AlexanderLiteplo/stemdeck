@@ -43,7 +43,10 @@ class DeckProcessor extends AudioWorkletProcessor {
   private stems: Stem[] = []
   private length = 0
   private playing = false
+  /** Source read head. In keylock mode this feeds SoundTouch and runs AHEAD of the audio. */
   private position = 0
+  /** Source time of the audio actually being emitted — what the UI should show. */
+  private reportPos = 0
   private tempo = 1
   private pitchSemitones = 0
   private keylock = false
@@ -69,6 +72,7 @@ class DeckProcessor extends AudioWorkletProcessor {
         this.stems = msg.stems
         this.length = msg.stems.length > 0 ? msg.stems[0].l.length : 0
         this.position = 0
+        this.reportPos = 0
         this.playing = false
         this.resetStretch()
         this.postPosition(true)
@@ -78,6 +82,7 @@ class DeckProcessor extends AudioWorkletProcessor {
         this.length = 0
         this.playing = false
         this.position = 0
+        this.reportPos = 0
         this.resetStretch()
         break
       case 'play':
@@ -89,13 +94,16 @@ class DeckProcessor extends AudioWorkletProcessor {
         break
       case 'seek':
         this.position = Math.max(0, Math.min(msg.frames, this.length - 1))
+        this.reportPos = this.position
         this.resetStretch()
         this.postPosition(true)
         break
       // Relative jump computed against the worklet's own sample-accurate
       // position — avoids the stale round-trip through the UI thread.
+      // Based on the AUDIBLE position, which in keylock lags the read head.
       case 'jumpBy':
-        this.position = Math.max(0, Math.min(this.position + msg.frames, this.length - 1))
+        this.position = Math.max(0, Math.min(this.reportPos + msg.frames, this.length - 1))
+        this.reportPos = this.position
         this.resetStretch()
         this.postPosition(true)
         break
@@ -109,6 +117,8 @@ class DeckProcessor extends AudioWorkletProcessor {
         break
       case 'keylock':
         this.keylock = msg.enabled
+        // Continue from what the listener is hearing, not the read head
+        this.position = this.reportPos
         this.resetStretch()
         break
       case 'stemGain':
@@ -182,13 +192,14 @@ class DeckProcessor extends AudioWorkletProcessor {
     this.blockCounter++
     if (force || this.blockCounter >= POSITION_POST_INTERVAL) {
       this.blockCounter = 0
-      this.port.postMessage({ type: 'position', frames: this.position, playing: this.playing })
+      this.port.postMessage({ type: 'position', frames: this.reportPos, playing: this.playing })
     }
   }
 
   private ended(): void {
     this.playing = false
     this.position = this.length > 0 ? this.length - 1 : 0
+    this.reportPos = this.position
     this.port.postMessage({ type: 'ended' })
     this.postPosition(true)
   }
@@ -217,6 +228,13 @@ class DeckProcessor extends AudioWorkletProcessor {
         left[i] = 0
         right[i] = 0
       }
+      // Advance the audible position by the source consumed per emitted
+      // frame (= tempo), wrapping with the loop like the read head does.
+      let advanced = this.reportPos + got * this.tempo
+      if (this.loopEnabled && this.loopEnd > this.loopStart) {
+        while (advanced >= this.loopEnd) advanced -= this.loopEnd - this.loopStart
+      }
+      this.reportPos = Math.min(advanced, this.length - 1)
       if (got === 0) this.ended()
     } else {
       const rate = this.tempo
@@ -247,6 +265,7 @@ class DeckProcessor extends AudioWorkletProcessor {
         right[i] = r
         this.position += rate
       }
+      this.reportPos = this.position
     }
 
     this.postPosition()

@@ -18,7 +18,21 @@ export function BeatMatchView() {
   const decks = useStore((s) => s.decks)
   const decksRef = useRef(decks)
   decksRef.current = decks
-  const drag = useRef<{ lane: number; lastX: number } | null>(null)
+  // Nudges are batched (~50ms) — in keylock mode every nudge restarts the
+  // time-stretch pipeline, so per-mousemove nudging would stutter audibly.
+  const drag = useRef<{ lane: number; lastX: number; pendingPx: number; lastSend: number } | null>(
+    null
+  )
+
+  const flushDrag = (width: number): void => {
+    const d = drag.current
+    if (!d || d.pendingPx === 0) return
+    const pxPerSec = width / WINDOW_SECONDS
+    // Dragging the waveform right moves the deck back in time
+    nudgePosition(d.lane, -d.pendingPx / pxPerSec)
+    d.pendingPx = 0
+    d.lastSend = performance.now()
+  }
 
   useEffect(() => {
     const canvas = canvasRef.current!
@@ -121,21 +135,20 @@ export function BeatMatchView() {
       onPointerDown={(e) => {
         const rect = e.currentTarget.getBoundingClientRect()
         const lane = e.clientY - rect.top < rect.height / 2 ? 0 : 1
-        drag.current = { lane, lastX: e.clientX }
+        drag.current = { lane, lastX: e.clientX, pendingPx: 0, lastSend: performance.now() }
         e.currentTarget.setPointerCapture(e.pointerId)
       }}
       onPointerMove={(e) => {
-        if (!drag.current) return
-        const rect = e.currentTarget.getBoundingClientRect()
-        const dx = e.clientX - drag.current.lastX
-        if (dx !== 0) {
-          const pxPerSec = rect.width / WINDOW_SECONDS
-          // Dragging the waveform right moves the deck back in time
-          nudgePosition(drag.current.lane, -dx / pxPerSec)
-          drag.current.lastX = e.clientX
+        const d = drag.current
+        if (!d) return
+        d.pendingPx += e.clientX - d.lastX
+        d.lastX = e.clientX
+        if (performance.now() - d.lastSend >= 50) {
+          flushDrag(e.currentTarget.getBoundingClientRect().width)
         }
       }}
-      onPointerUp={() => {
+      onPointerUp={(e) => {
+        flushDrag(e.currentTarget.getBoundingClientRect().width)
         drag.current = null
       }}
     />
