@@ -41,6 +41,35 @@ export async function initApp(): Promise<void> {
     const track = useStore.getState().library.find((t) => t.path === trackPath)
     if (track) updateTrack(track.id, { stemStatus: line.slice(0, 120) })
   })
+  const youtube = await window.stemdeck.checkYoutube()
+  useStore.setState((s) => ({ youtube: { ...s.youtube, available: youtube.ytdlp !== null } }))
+  window.stemdeck.onYoutubeProgress(({ line }) => {
+    useStore.setState((s) =>
+      s.youtube.downloading ? { youtube: { ...s.youtube, status: line.slice(0, 120) } } : s
+    )
+  })
+}
+
+/** Download a YouTube track's audio with yt-dlp and drop it into the library. */
+export async function addYoutubeTrack(url: string): Promise<void> {
+  const { youtube } = useStore.getState()
+  if (youtube.downloading) return
+  if (!youtube.available) {
+    showToast('yt-dlp not found — install it with: pipx install yt-dlp')
+    return
+  }
+  useStore.setState((s) => ({
+    youtube: { ...s.youtube, downloading: true, status: 'Starting download…' }
+  }))
+  try {
+    const paths = await window.stemdeck.downloadYoutube(url)
+    await addTrackPaths(paths)
+    showToast(`Downloaded ${paths.length} track${paths.length > 1 ? 's' : ''} 🎶`)
+  } catch (err) {
+    showToast(`YouTube download failed: ${(err as Error).message}`)
+  } finally {
+    useStore.setState((s) => ({ youtube: { ...s.youtube, downloading: false, status: '' } }))
+  }
 }
 
 // ---------- Library persistence ----------

@@ -562,6 +562,40 @@ button:disabled {
   color: var(--deck-b);
 }
 
+/* ---------- YouTube add ---------- */
+
+.youtube-add {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.youtube-add input {
+  background: var(--panel-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-family: inherit;
+  width: 280px;
+  user-select: text;
+}
+
+.youtube-add input:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+.yt-status {
+  font-size: 10px;
+  color: var(--yellow);
+  max-width: 200px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 /* ---------- Toast ---------- */
 
 .toast {

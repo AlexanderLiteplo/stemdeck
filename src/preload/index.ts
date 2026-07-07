@@ -34,7 +34,16 @@ const api = {
   saveRecording: (data: ArrayBuffer): Promise<string | null> =>
     ipcRenderer.invoke('recording:save', data),
   loadLibrary: (): Promise<unknown> => ipcRenderer.invoke('library:load'),
-  saveLibrary: (data: unknown): Promise<void> => ipcRenderer.invoke('library:save', data)
+  saveLibrary: (data: unknown): Promise<void> => ipcRenderer.invoke('library:save', data),
+  checkYoutube: (): Promise<{ ytdlp: string | null; ffmpeg: string | null }> =>
+    ipcRenderer.invoke('youtube:check'),
+  downloadYoutube: (url: string): Promise<string[]> => ipcRenderer.invoke('youtube:download', url),
+  onYoutubeProgress: (callback: (event: { url: string; line: string }) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: { url: string; line: string }): void =>
+      callback(payload)
+    ipcRenderer.on('youtube:progress', listener)
+    return () => ipcRenderer.removeListener('youtube:progress', listener)
+  }
 }
 
 export type StemDeckApi = typeof api

@@ -23,6 +23,9 @@ export interface StemDeckApi {
   saveRecording(data: ArrayBuffer): Promise<string | null>
   loadLibrary(): Promise<unknown>
   saveLibrary(data: unknown): Promise<void>
+  checkYoutube(): Promise<{ ytdlp: string | null; ffmpeg: string | null }>
+  downloadYoutube(url: string): Promise<string[]>
+  onYoutubeProgress(callback: (event: { url: string; line: string }) => void): () => void
 }
 
 export interface PersistedTrack {

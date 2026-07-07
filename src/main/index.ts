@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { promises as fs, existsSync } from 'fs'
 import path from 'path'
 import { findSeparatorBin, getCachedStems, separateStems, STEM_MODELS } from './stems'
+import { checkYoutube, downloadYoutubeAudio } from './youtube'
 
 const isDev = !app.isPackaged && !!process.env.ELECTRON_RENDERER_URL
 
@@ -68,6 +69,16 @@ function registerIpc(): void {
         if (!event.sender.isDestroyed()) {
           event.sender.send('stems:progress', { trackPath, line })
         }
+      }
+    })
+  )
+
+  ipcMain.handle('youtube:check', () => checkYoutube())
+
+  ipcMain.handle('youtube:download', (event, url: string) =>
+    downloadYoutubeAudio(url, (line) => {
+      if (!event.sender.isDestroyed()) {
+        event.sender.send('youtube:progress', { url, line })
       }
     })
   )

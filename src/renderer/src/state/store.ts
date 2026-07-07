@@ -68,6 +68,7 @@ export interface AppState {
   masterGain: number
   recording: boolean
   toast: string | null
+  youtube: { available: boolean; downloading: boolean; status: string }
 }
 
 export const emptyDeck = (): DeckState => ({
@@ -110,7 +111,8 @@ export const useStore = create<AppState>(() => ({
   crossfader: 0.5,
   masterGain: 1,
   recording: false,
-  toast: null
+  toast: null,
+  youtube: { available: false, downloading: false, status: '' }
 }))
 
 export function updateDeck(index: number, patch: Partial<DeckState>): void {

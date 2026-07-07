@@ -1,6 +1,8 @@
+import { useState } from 'react'
 import {
   addDroppedFiles,
   addTracksFromDialog,
+  addYoutubeTrack,
   loadTrackToDeck,
   saveLibrary,
   separateTrack
@@ -12,6 +14,38 @@ function formatDuration(seconds: number): string {
   const m = Math.floor(seconds / 60)
   const s = Math.round(seconds % 60)
   return `${m}:${String(s).padStart(2, '0')}`
+}
+
+function YoutubeAdd() {
+  const youtube = useStore((s) => s.youtube)
+  const [url, setUrl] = useState('')
+
+  const submit = (): void => {
+    if (!url.trim() || youtube.downloading) return
+    void addYoutubeTrack(url)
+    setUrl('')
+  }
+
+  return (
+    <div className="youtube-add" title={youtube.available ? 'Download audio from one of your YouTube uploads' : 'Install yt-dlp to enable (pipx install yt-dlp)'}>
+      <input
+        type="text"
+        placeholder="Paste a YouTube link to one of your songs…"
+        value={url}
+        disabled={!youtube.available || youtube.downloading}
+        onChange={(e) => setUrl(e.target.value)}
+        onKeyDown={(e) => e.key === 'Enter' && submit()}
+      />
+      <button
+        className="toggle"
+        disabled={!youtube.available || youtube.downloading || !url.trim()}
+        onClick={submit}
+      >
+        {youtube.downloading ? '⬇ DOWNLOADING…' : '⬇ ADD FROM YOUTUBE'}
+      </button>
+      {youtube.downloading && <span className="yt-status">{youtube.status}</span>}
+    </div>
+  )
 }
 
 export function Library() {
@@ -34,6 +68,7 @@ export function Library() {
           + ADD TRACKS
         </button>
         <span className="dim">or drag &amp; drop audio files anywhere here</span>
+        <YoutubeAdd />
         <span className="spacer" />
         <label className="model-select">
           Stem model{' '}
