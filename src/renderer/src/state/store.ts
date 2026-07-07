@@ -66,6 +66,8 @@ export interface AppState {
   stemEngine: { available: boolean; bin: string | null; checked: boolean }
   stemModels: Record<string, { label: string; stems: number }>
   selectedModel: string
+  /** Automatically queue stem separation for newly added tracks. */
+  autoStems: boolean
   library: TrackInfo[]
   decks: [DeckState, DeckState]
   mixer: [MixerChannelState, MixerChannelState]
@@ -110,6 +112,7 @@ export const useStore = create<AppState>(() => ({
   stemEngine: { available: false, bin: null, checked: false },
   stemModels: {},
   selectedModel: 'htdemucs_ft.yaml',
+  autoStems: true,
   library: [],
   decks: [emptyDeck(), emptyDeck()],
   mixer: [emptyChannel(), emptyChannel()],

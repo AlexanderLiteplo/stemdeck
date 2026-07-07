@@ -116,7 +116,12 @@ export async function saveLibrary(): Promise<void> {
         stems: t.stems
       }
     })
-  const data: PersistedLibrary = { version: 1, selectedModel, tracks }
+  const data: PersistedLibrary = {
+    version: 1,
+    selectedModel,
+    autoStems: useStore.getState().autoStems,
+    tracks
+  }
   await window.stemdeck.saveLibrary(data)
 }
 
@@ -150,7 +155,8 @@ async function restoreLibrary(): Promise<void> {
   }
   useStore.setState({
     library: tracks,
-    selectedModel: data.selectedModel || useStore.getState().selectedModel
+    selectedModel: data.selectedModel || useStore.getState().selectedModel,
+    autoStems: data.autoStems ?? true
   })
 }
 
@@ -217,6 +223,7 @@ async function analyzeTrack(track: TrackInfo, model: string): Promise<void> {
     trackPeaks.set(track.id, computePeaks(buffer))
     const cached = await window.stemdeck.getCachedStems(track.path, model)
     updateTrack(track.id, { duration: buffer.duration, stems: cached })
+    if (!cached && useStore.getState().autoStems) queueSeparation(track.id)
     const { bpm, firstBeat, confidence } = await analyzeBpm(buffer)
     updateTrack(track.id, {
       bpm,
@@ -498,6 +505,35 @@ export function setStemVolume(deckIndex: number, stemIndex: number, volume: numb
   const stems = state.stems.map((s, i) => (i === stemIndex ? { ...s, volume } : s))
   if (stems[stemIndex].active) engine.decks[deckIndex].setStemGain(stemIndex, volume)
   updateDeck(deckIndex, { stems })
+}
+
+/**
+ * Sequential separation queue: stem splitting saturates the CPU, so newly
+ * added tracks are processed one at a time in the background.
+ */
+const stemQueue: string[] = []
+let queueRunning = false
+
+export function queueSeparation(trackId: string): void {
+  if (!useStore.getState().stemEngine.available) return
+  if (stemQueue.includes(trackId)) return
+  stemQueue.push(trackId)
+  void processStemQueue()
+}
+
+async function processStemQueue(): Promise<void> {
+  if (queueRunning) return
+  queueRunning = true
+  try {
+    while (stemQueue.length > 0) {
+      const trackId = stemQueue.shift()!
+      const track = useStore.getState().library.find((t) => t.id === trackId)
+      if (!track || track.stems || track.separating) continue
+      await separateTrack(trackId)
+    }
+  } finally {
+    queueRunning = false
+  }
 }
 
 export async function separateTrack(trackId: string): Promise<void> {

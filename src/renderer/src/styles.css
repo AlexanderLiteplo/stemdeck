@@ -526,6 +526,19 @@ button:disabled {
   font-family: inherit;
 }
 
+.auto-stems {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  color: var(--dim);
+  cursor: pointer;
+}
+
+.auto-stems input {
+  accent-color: var(--accent);
+}
+
 .engine-status.ok {
   color: var(--green);
 }

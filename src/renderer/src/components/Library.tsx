@@ -54,6 +54,7 @@ export function Library() {
   const stemEngine = useStore((s) => s.stemEngine)
   const stemModels = useStore((s) => s.stemModels)
   const selectedModel = useStore((s) => s.selectedModel)
+  const autoStems = useStore((s) => s.autoStems)
 
   return (
     <section
@@ -86,6 +87,21 @@ export function Library() {
               </option>
             ))}
           </select>
+        </label>
+        <label
+          className="auto-stems"
+          title="Automatically split stems for every newly added track (queued one at a time)"
+        >
+          <input
+            type="checkbox"
+            checked={autoStems}
+            disabled={!stemEngine.available}
+            onChange={(e) => {
+              useStore.setState({ autoStems: e.target.checked })
+              void saveLibrary()
+            }}
+          />{' '}
+          auto-stems
         </label>
         <span
           className={`engine-status ${stemEngine.available ? 'ok' : 'missing'}`}

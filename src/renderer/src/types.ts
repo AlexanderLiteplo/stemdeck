@@ -45,6 +45,7 @@ export interface PersistedTrack {
 export interface PersistedLibrary {
   version: 1
   selectedModel: string
+  autoStems?: boolean
   tracks: PersistedTrack[]
 }
 
