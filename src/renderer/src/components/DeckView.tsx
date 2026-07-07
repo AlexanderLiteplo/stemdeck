@@ -4,6 +4,7 @@ import {
   beatLoop,
   cuePress,
   cyclePitchRange,
+  jumpBars,
   toggleReverb,
   hotCuePress,
   loopExit,
@@ -95,6 +96,17 @@ export function DeckView({ deckIndex }: { deckIndex: number }) {
             {[1, 2, 4, 8].map((beats) => (
               <button key={beats} className="pad loop-beat" onClick={() => beatLoop(deckIndex, beats)}>
                 {beats}
+              </button>
+            ))}
+            <span className="row-gap" />
+            {[4, 2, 1].map((bars) => (
+              <button
+                key={bars}
+                className="pad bar-jump"
+                onClick={() => jumpBars(deckIndex, -bars)}
+                title={`Jump back ${bars} bar${bars > 1 ? 's' : ''}`}
+              >
+                ◂{bars}
               </button>
             ))}
           </div>

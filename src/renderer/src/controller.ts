@@ -417,6 +417,18 @@ export function beatLoop(deckIndex: number, beats: number): void {
   applyLoop(deckIndex, true, start, start + beats * beatLen)
 }
 
+/** Jump backward/forward by musical bars (4 beats each) at the track's own timeline. */
+export function jumpBars(deckIndex: number, bars: number): void {
+  const state = useStore.getState().decks[deckIndex]
+  if (!state.trackId) return
+  if (!state.baseBpm) {
+    showToast('Bar jumps need a detected BPM')
+    return
+  }
+  const seconds = bars * 4 * (60 / state.baseBpm)
+  engine.decks[deckIndex].jumpBy(seconds)
+}
+
 // ---------- Stems ----------
 
 export function setStemActive(deckIndex: number, stemIndex: number, active: boolean): void {

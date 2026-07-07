@@ -29,6 +29,7 @@ type InMessage =
   | { type: 'play' }
   | { type: 'pause' }
   | { type: 'seek'; frames: number }
+  | { type: 'jumpBy'; frames: number }
   | { type: 'tempo'; value: number }
   | { type: 'pitch'; semitones: number }
   | { type: 'keylock'; enabled: boolean }
@@ -88,6 +89,13 @@ class DeckProcessor extends AudioWorkletProcessor {
         break
       case 'seek':
         this.position = Math.max(0, Math.min(msg.frames, this.length - 1))
+        this.resetStretch()
+        this.postPosition(true)
+        break
+      // Relative jump computed against the worklet's own sample-accurate
+      // position — avoids the stale round-trip through the UI thread.
+      case 'jumpBy':
+        this.position = Math.max(0, Math.min(this.position + msg.frames, this.length - 1))
         this.resetStretch()
         this.postPosition(true)
         break

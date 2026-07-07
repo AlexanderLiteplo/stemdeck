@@ -141,6 +141,11 @@ export class DeckEngine {
     this.node.port.postMessage({ type: 'seek', frames: this.positionFrames })
   }
 
+  /** Sample-accurate relative jump, resolved inside the worklet. */
+  jumpBy(seconds: number): void {
+    this.node.port.postMessage({ type: 'jumpBy', frames: seconds * this.ctx.sampleRate })
+  }
+
   setTempo(rate: number): void {
     this.node.port.postMessage({ type: 'tempo', value: rate })
   }

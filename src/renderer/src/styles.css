@@ -227,6 +227,15 @@ button:disabled {
   width: 28px;
 }
 
+.pad.bar-jump {
+  width: 32px;
+  color: var(--deck-a);
+}
+
+.deck-b .pad.bar-jump {
+  color: var(--deck-b);
+}
+
 .big-btn {
   height: 44px;
   min-width: 56px;
