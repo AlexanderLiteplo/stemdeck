@@ -1,0 +1,40 @@
+import { contextBridge, ipcRenderer, webUtils } from 'electron'
+
+export interface StemPaths {
+  vocals?: string
+  drums?: string
+  bass?: string
+  other?: string
+  instrumental?: string
+}
+
+export interface StemProgressEvent {
+  trackPath: string
+  line: string
+}
+
+const api = {
+  openAudioDialog: (): Promise<string[]> => ipcRenderer.invoke('dialog:open-audio'),
+  readFile: (filePath: string): Promise<ArrayBuffer> => ipcRenderer.invoke('file:read', filePath),
+  getPathForFile: (file: File): string => webUtils.getPathForFile(file),
+  stemModels: (): Promise<Record<string, { label: string; stems: number }>> =>
+    ipcRenderer.invoke('stems:models'),
+  checkStemEngine: (): Promise<{ available: boolean; bin: string | null }> =>
+    ipcRenderer.invoke('stems:check'),
+  getCachedStems: (trackPath: string, model: string): Promise<StemPaths | null> =>
+    ipcRenderer.invoke('stems:cached', trackPath, model),
+  separateStems: (trackPath: string, model: string): Promise<StemPaths> =>
+    ipcRenderer.invoke('stems:separate', trackPath, model),
+  onStemProgress: (callback: (event: StemProgressEvent) => void): (() => void) => {
+    const listener = (_e: Electron.IpcRendererEvent, payload: StemProgressEvent): void =>
+      callback(payload)
+    ipcRenderer.on('stems:progress', listener)
+    return () => ipcRenderer.removeListener('stems:progress', listener)
+  },
+  saveRecording: (data: ArrayBuffer): Promise<string | null> =>
+    ipcRenderer.invoke('recording:save', data)
+}
+
+export type StemDeckApi = typeof api
+
+contextBridge.exposeInMainWorld('stemdeck', api)
