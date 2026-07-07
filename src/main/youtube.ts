@@ -32,6 +32,10 @@ async function findBin(candidates: string[], versionArg: string): Promise<string
   return null
 }
 
+export function findFfmpeg(): Promise<string | null> {
+  return findBin(FFMPEG_CANDIDATES, '-version')
+}
+
 export async function checkYoutube(): Promise<{ ytdlp: string | null; ffmpeg: string | null }> {
   const [ytdlp, ffmpeg] = await Promise.all([
     findBin(YTDLP_CANDIDATES, '--version'),

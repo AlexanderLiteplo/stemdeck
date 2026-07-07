@@ -2,7 +2,9 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { promises as fs, existsSync } from 'fs'
 import path from 'path'
 import { findSeparatorBin, getCachedStems, separateStems, STEM_MODELS } from './stems'
-import { checkYoutube, downloadYoutubeAudio } from './youtube'
+import { checkYoutube, downloadYoutubeAudio, findFfmpeg } from './youtube'
+import { execFile } from 'child_process'
+import { tmpdir } from 'os'
 
 const isDev = !app.isPackaged && !!process.env.ELECTRON_RENDERER_URL
 
@@ -107,14 +109,40 @@ function registerIpc(): void {
   ipcMain.handle('recording:save', async (event, data: ArrayBuffer) => {
     const win = BrowserWindow.fromWebContents(event.sender)
     if (!win) return null
+    // The recorder produces webm/opus; transcode to mp3 when ffmpeg exists
+    const ffmpeg = await findFfmpeg()
+    const ext = ffmpeg ? 'mp3' : 'webm'
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
     const result = await dialog.showSaveDialog(win, {
       title: 'Save mix recording',
-      defaultPath: path.join(app.getPath('music'), `stemdeck-mix-${stamp}.webm`),
-      filters: [{ name: 'WebM audio', extensions: ['webm'] }]
+      defaultPath: path.join(app.getPath('music'), `stemdeck-mix-${stamp}.${ext}`),
+      filters: ffmpeg
+        ? [
+            { name: 'MP3 audio', extensions: ['mp3'] },
+            { name: 'WebM audio', extensions: ['webm'] }
+          ]
+        : [{ name: 'WebM audio', extensions: ['webm'] }]
     })
     if (result.canceled || !result.filePath) return null
-    await fs.writeFile(result.filePath, Buffer.from(data))
+
+    if (ffmpeg && result.filePath.toLowerCase().endsWith('.mp3')) {
+      const tmpFile = path.join(tmpdir(), `stemdeck-rec-${Date.now()}.webm`)
+      await fs.writeFile(tmpFile, Buffer.from(data))
+      try {
+        await new Promise<void>((resolve, reject) => {
+          execFile(
+            ffmpeg,
+            ['-y', '-i', tmpFile, '-codec:a', 'libmp3lame', '-b:a', '320k', result.filePath!],
+            { timeout: 10 * 60 * 1000 },
+            (err) => (err ? reject(err) : resolve())
+          )
+        })
+      } finally {
+        await fs.rm(tmpFile, { force: true })
+      }
+    } else {
+      await fs.writeFile(result.filePath, Buffer.from(data))
+    }
     return result.filePath
   })
 }
