@@ -3,6 +3,8 @@ import { engine } from '../audio/engine'
 import {
   beatLoop,
   cuePress,
+  cyclePitchRange,
+  toggleReverb,
   hotCuePress,
   loopExit,
   loopIn,
@@ -20,8 +22,6 @@ import {
 import { useStore } from '../state/store'
 import { Fader } from './Fader'
 import { Waveform } from './Waveform'
-
-const PITCH_RANGE = 0.08 // ±8%, like a club-standard pitch fader
 
 function formatTime(seconds: number): string {
   const s = Math.max(0, seconds)
@@ -119,6 +119,13 @@ export function DeckView({ deckIndex }: { deckIndex: number }) {
             >
               KEYLOCK
             </button>
+            <button
+              className={`toggle ${deck.reverb ? 'active' : ''}`}
+              onClick={() => toggleReverb(deckIndex)}
+              title="Reverb send on this deck"
+            >
+              REVERB
+            </button>
             <div className="key-shift" title="Key shift in semitones (keylock only)">
               <button
                 disabled={!deck.keylock}
@@ -201,11 +208,18 @@ export function DeckView({ deckIndex }: { deckIndex: number }) {
         </div>
 
         <div className="pitch-fader">
+          <button
+            className="mini-btn"
+            onClick={() => cyclePitchRange(deckIndex)}
+            title="Cycle pitch fader range"
+          >
+            ±{Math.round(deck.pitchRange * 100)}%
+          </button>
           <Fader
             orientation="vertical"
             length={180}
-            min={1 - PITCH_RANGE}
-            max={1 + PITCH_RANGE}
+            min={1 - deck.pitchRange}
+            max={1 + deck.pitchRange}
             value={deck.tempo}
             onChange={(v) => setTempo(deckIndex, v)}
             onDoubleClick={() => setTempo(deckIndex, 1)}

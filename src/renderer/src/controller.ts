@@ -107,7 +107,8 @@ export async function loadTrackToDeck(
   const track = useStore.getState().library.find((t) => t.id === trackId)
   if (!track) return
   const deck = engine.decks[deckIndex]
-  updateDeck(deckIndex, { ...emptyDeck(), loading: true, trackId, title: track.name })
+  const { pitchRange } = useStore.getState().decks[deckIndex]
+  updateDeck(deckIndex, { ...emptyDeck(), pitchRange, loading: true, trackId, title: track.name })
   try {
     let stems: LoadedStem[]
     if (withStems && track.stems) {
@@ -218,6 +219,25 @@ export function toggleKeylock(deckIndex: number): void {
   } else {
     updateDeck(deckIndex, { keylock: next })
   }
+}
+
+const PITCH_RANGES = [0.08, 0.16, 0.5]
+
+/** Cycle the pitch fader range ±8% → ±16% → ±50%, clamping the current tempo into it. */
+export function cyclePitchRange(deckIndex: number): void {
+  const state = useStore.getState().decks[deckIndex]
+  const idx = PITCH_RANGES.indexOf(state.pitchRange)
+  const next = PITCH_RANGES[(idx + 1) % PITCH_RANGES.length]
+  const clamped = Math.min(1 + next, Math.max(1 - next, state.tempo))
+  if (clamped !== state.tempo) engine.decks[deckIndex].setTempo(clamped)
+  updateDeck(deckIndex, { pitchRange: next, tempo: clamped })
+}
+
+export function toggleReverb(deckIndex: number): void {
+  const state = useStore.getState().decks[deckIndex]
+  const next = !state.reverb
+  engine.decks[deckIndex].setReverb(next ? 0.45 : 0)
+  updateDeck(deckIndex, { reverb: next })
 }
 
 /** Momentary pitch bend for beat alignment; call with 0 to release. */

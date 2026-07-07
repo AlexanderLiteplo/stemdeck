@@ -35,8 +35,11 @@ export interface DeckState {
   loading: boolean
   playing: boolean
   tempo: number
+  /** Pitch fader half-range as a fraction, e.g. 0.16 = ±16%. */
+  pitchRange: number
   pitch: number
   keylock: boolean
+  reverb: boolean
   cuePoint: number
   hotCues: (number | null)[]
   loop: LoopState
@@ -76,8 +79,10 @@ export const emptyDeck = (): DeckState => ({
   loading: false,
   playing: false,
   tempo: 1,
+  pitchRange: 0.16,
   pitch: 0,
   keylock: false,
+  reverb: false,
   cuePoint: 0,
   hotCues: [null, null, null, null],
   loop: { active: false, start: 0, end: 0 },

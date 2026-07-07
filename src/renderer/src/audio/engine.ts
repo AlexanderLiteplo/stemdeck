@@ -18,6 +18,19 @@ export type DeckMessage =
   | { type: 'position'; frames: number; playing: boolean }
   | { type: 'ended' }
 
+/** Synthetic hall impulse response: exponentially decaying stereo noise. */
+function makeReverbImpulse(ctx: AudioContext, seconds = 2.8, decay = 3.5): AudioBuffer {
+  const length = Math.floor(ctx.sampleRate * seconds)
+  const impulse = ctx.createBuffer(2, length, ctx.sampleRate)
+  for (let ch = 0; ch < 2; ch++) {
+    const data = impulse.getChannelData(ch)
+    for (let i = 0; i < length; i++) {
+      data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, decay)
+    }
+  }
+  return impulse
+}
+
 export class DeckEngine {
   readonly node: AudioWorkletNode
   readonly trim: GainNode
@@ -28,6 +41,8 @@ export class DeckEngine {
   readonly filterLP: BiquadFilterNode
   readonly fader: GainNode
   readonly xfGain: GainNode
+  readonly reverbSend: GainNode
+  readonly convolver: ConvolverNode
 
   private ctx: AudioContext
   private positionFrames = 0
@@ -35,7 +50,7 @@ export class DeckEngine {
   onEnded: (() => void) | null = null
   onPosition: ((seconds: number) => void) | null = null
 
-  constructor(ctx: AudioContext, destination: AudioNode) {
+  constructor(ctx: AudioContext, destination: AudioNode, reverbImpulse: AudioBuffer) {
     this.ctx = ctx
     this.node = new AudioWorkletNode(ctx, 'deck-processor', {
       numberOfInputs: 0,
@@ -74,6 +89,14 @@ export class DeckEngine {
       .connect(this.fader)
       .connect(this.xfGain)
       .connect(destination)
+
+    // Reverb: post-filter send mixed back in pre-fader, so the channel
+    // fader and crossfader still control the wet tail.
+    this.reverbSend = ctx.createGain()
+    this.reverbSend.gain.value = 0
+    this.convolver = ctx.createConvolver()
+    this.convolver.buffer = reverbImpulse
+    this.filterLP.connect(this.reverbSend).connect(this.convolver).connect(this.fader)
 
     this.node.port.onmessage = (e: MessageEvent<DeckMessage>) => {
       const msg = e.data
@@ -165,6 +188,11 @@ export class DeckEngine {
     }
   }
 
+  /** Reverb wet amount in [0, 1]; 0 disables. */
+  setReverb(amount: number): void {
+    this.reverbSend.gain.setTargetAtTime(amount, this.ctx.currentTime, 0.08)
+  }
+
   setTrim(value: number): void {
     this.trim.gain.setTargetAtTime(value, this.ctx.currentTime, 0.01)
   }
@@ -210,7 +238,11 @@ export class AudioEngine {
     this.limiter.connect(this.analyser)
     this.limiter.connect(this.recordDest)
 
-    this.decks = [new DeckEngine(this.ctx, this.master), new DeckEngine(this.ctx, this.master)]
+    const impulse = makeReverbImpulse(this.ctx)
+    this.decks = [
+      new DeckEngine(this.ctx, this.master, impulse),
+      new DeckEngine(this.ctx, this.master, impulse)
+    ]
     this.setCrossfader(0.5)
     this.ready = true
   }
