@@ -46,6 +46,9 @@ export class DeckEngine {
 
   private ctx: AudioContext
   private positionFrames = 0
+  private tempoValue = 1
+  private playingFlag = false
+  private lastPositionAt = 0
   duration = 0
   onEnded: (() => void) | null = null
   onPosition: ((seconds: number) => void) | null = null
@@ -102,8 +105,11 @@ export class DeckEngine {
       const msg = e.data
       if (msg.type === 'position') {
         this.positionFrames = msg.frames
+        this.playingFlag = msg.playing
+        this.lastPositionAt = performance.now()
         this.onPosition?.(this.getPosition())
       } else if (msg.type === 'ended') {
+        this.playingFlag = false
         this.onEnded?.()
       }
     }
@@ -129,15 +135,19 @@ export class DeckEngine {
 
   play(): void {
     void this.ctx.resume()
+    this.playingFlag = true
+    this.lastPositionAt = performance.now()
     this.node.port.postMessage({ type: 'play' })
   }
 
   pause(): void {
+    this.playingFlag = false
     this.node.port.postMessage({ type: 'pause' })
   }
 
   seek(seconds: number): void {
     this.positionFrames = seconds * this.ctx.sampleRate
+    this.lastPositionAt = performance.now()
     this.node.port.postMessage({ type: 'seek', frames: this.positionFrames })
   }
 
@@ -147,6 +157,7 @@ export class DeckEngine {
   }
 
   setTempo(rate: number): void {
+    this.tempoValue = rate
     this.node.port.postMessage({ type: 'tempo', value: rate })
   }
 
@@ -206,8 +217,13 @@ export class DeckEngine {
     this.fader.gain.setTargetAtTime(value, this.ctx.currentTime, 0.01)
   }
 
+  /** Playhead in source seconds, extrapolated between worklet updates for smooth UI. */
   getPosition(): number {
-    return this.positionFrames / this.ctx.sampleRate
+    let pos = this.positionFrames / this.ctx.sampleRate
+    if (this.playingFlag) {
+      pos += ((performance.now() - this.lastPositionAt) / 1000) * this.tempoValue
+    }
+    return this.duration > 0 ? Math.min(pos, this.duration) : pos
   }
 }
 

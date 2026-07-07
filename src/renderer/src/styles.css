@@ -449,6 +449,23 @@ button:disabled {
   color: var(--dim);
 }
 
+/* ---------- Beatmatch view ---------- */
+
+.beatmatch {
+  width: 100%;
+  height: 118px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  cursor: grab;
+  touch-action: none;
+  flex-shrink: 0;
+}
+
+.beatmatch:active {
+  cursor: grabbing;
+}
+
 /* ---------- Mixer ---------- */
 
 .mixer {

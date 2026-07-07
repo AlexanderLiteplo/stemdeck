@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { initApp, setMasterGain, toggleRecording } from './controller'
 import { useStore } from './state/store'
+import { BeatMatchView } from './components/BeatMatchView'
 import { DeckView } from './components/DeckView'
 import { Library } from './components/Library'
 import { MasterMeter } from './components/MasterMeter'
@@ -55,6 +56,8 @@ export default function App() {
         <Mixer />
         <DeckView deckIndex={1} />
       </main>
+
+      <BeatMatchView />
 
       <Library />
 

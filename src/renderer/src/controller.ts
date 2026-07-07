@@ -3,8 +3,7 @@
  * The engine owns real-time audio state; the store owns what React renders.
  */
 import { engine, type LoadedStem } from './audio/engine'
-import { analyzeBpm } from './audio/analysis'
-import { computePeaks, type WaveformPeaks } from './audio/analysis'
+import { analyzeBpm, computeHiPeaks, computePeaks, type WaveformPeaks } from './audio/analysis'
 import {
   emptyDeck,
   showToast,
@@ -19,6 +18,8 @@ import type { PersistedLibrary, PersistedTrack, StemPaths } from './types'
 /** Waveform peak data lives outside the store (too big for React state). */
 export const trackPeaks = new Map<string, WaveformPeaks>()
 export const deckPeaks: (WaveformPeaks | null)[] = [null, null]
+/** Zoomed peaks for the beatmatch view, computed per deck load. */
+export const deckHiPeaks: (WaveformPeaks | null)[] = [null, null]
 
 let trackCounter = 0
 
@@ -245,6 +246,7 @@ export async function loadTrackToDeck(
       const data = await window.stemdeck.readFile(track.path)
       stems = [{ name: 'Mix', buffer: await engine.decode(data) }]
     }
+    deckHiPeaks[deckIndex] = computeHiPeaks(stems.map((s) => s.buffer))
     deck.load(stems)
     deckPeaks[deckIndex] = trackPeaks.get(trackId) ?? null
     deck.setTempo(1)
@@ -259,9 +261,18 @@ export async function loadTrackToDeck(
       stems: stems.map((s) => ({ name: s.name, active: true, volume: 1 }))
     })
   } catch (err) {
+    deckHiPeaks[deckIndex] = null
+    deckPeaks[deckIndex] = null
     updateDeck(deckIndex, { ...emptyDeck() })
     showToast(`Failed to load track: ${(err as Error).message}`)
   }
+}
+
+/** Nudge a deck's position by real-time seconds (used by beatmatch view dragging). */
+export function nudgePosition(deckIndex: number, realSeconds: number): void {
+  const state = useStore.getState().decks[deckIndex]
+  if (!state.trackId) return
+  engine.decks[deckIndex].jumpBy(realSeconds * state.tempo)
 }
 
 // ---------- Transport ----------

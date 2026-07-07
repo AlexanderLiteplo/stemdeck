@@ -27,6 +27,33 @@ export function computePeaks(buffer: AudioBuffer, buckets = 1200): WaveformPeaks
   return { data, buckets }
 }
 
+export const HI_PEAKS_PER_SECOND = 160
+
+/** High-resolution peaks for the zoomed beatmatch view; stems are summed. */
+export function computeHiPeaks(buffers: AudioBuffer[], perSecond = HI_PEAKS_PER_SECOND): WaveformPeaks {
+  const length = buffers[0].length
+  const sampleRate = buffers[0].sampleRate
+  const buckets = Math.ceil((length / sampleRate) * perSecond)
+  const data = new Float32Array(buckets * 2)
+  const channels = buffers.map((b) => b.getChannelData(0))
+  const samplesPerBucket = length / buckets
+  for (let b = 0; b < buckets; b++) {
+    let min = 0
+    let max = 0
+    const start = Math.floor(b * samplesPerBucket)
+    const end = Math.min(Math.floor((b + 1) * samplesPerBucket), length)
+    for (let i = start; i < end; i += 2) {
+      let v = 0
+      for (const ch of channels) v += ch[i]
+      if (v < min) min = v
+      if (v > max) max = v
+    }
+    data[b * 2] = min
+    data[b * 2 + 1] = max
+  }
+  return { data, buckets }
+}
+
 export function mixdownMono(buffer: AudioBuffer): Float32Array {
   const ch0 = buffer.getChannelData(0)
   if (buffer.numberOfChannels === 1) return ch0.slice()
