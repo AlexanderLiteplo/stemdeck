@@ -1,6 +1,7 @@
 node_modules/
 out/
 dist/
+release/
 src/renderer/public/worklets/
 *.log
 .DS_Store
