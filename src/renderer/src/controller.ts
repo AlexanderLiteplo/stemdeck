@@ -246,6 +246,23 @@ async function analyzeTrack(track: TrackInfo, model: string): Promise<void> {
   }
 }
 
+/**
+ * Halve/double a track's BPM (octave correction when the detector picks
+ * the wrong one). The beat grid stays valid: halving doubles the beat
+ * length onto existing beats; doubling subdivides them.
+ */
+export function scaleTrackBpm(trackId: string, factor: 0.5 | 2): void {
+  const track = useStore.getState().library.find((t) => t.id === trackId)
+  if (!track || !track.bpm) return
+  const bpm = Math.round(track.bpm * factor * 100) / 100
+  if (bpm < 30 || bpm > 400) return
+  updateTrack(trackId, { bpm })
+  useStore.getState().decks.forEach((deck, i) => {
+    if (deck.trackId === trackId) updateDeck(i, { baseBpm: bpm })
+  })
+  void saveLibrary()
+}
+
 /** Re-run BPM/waveform analysis (e.g. after detector improvements). */
 export async function reanalyzeTrack(trackId: string): Promise<void> {
   const { library, selectedModel } = useStore.getState()

@@ -15,6 +15,7 @@ import {
   setPitch,
   setStemActive,
   setStemVolume,
+  scaleTrackBpm,
   setTempo,
   sync,
   toggleKeylock,
@@ -63,6 +64,24 @@ export function DeckView({ deckIndex }: { deckIndex: number }) {
           {deck.loading ? 'Loading…' : deck.title || 'Load a track from the library'}
         </span>
         <span className="deck-bpm">{effectiveBpm} BPM</span>
+        {deck.trackId && deck.baseBpm > 0 && (
+          <span className="bpm-octave">
+            <button
+              className="mini-btn"
+              title="Halve BPM"
+              onClick={() => scaleTrackBpm(deck.trackId!, 0.5)}
+            >
+              ×½
+            </button>
+            <button
+              className="mini-btn"
+              title="Double BPM"
+              onClick={() => scaleTrackBpm(deck.trackId!, 2)}
+            >
+              ×2
+            </button>
+          </span>
+        )}
         {deck.trackId && <DeckClock deckIndex={deckIndex} duration={deck.duration} />}
       </header>
 

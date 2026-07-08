@@ -6,7 +6,8 @@ import {
   loadTrackToDeck,
   queueSeparation,
   reanalyzeTrack,
-  saveLibrary
+  saveLibrary,
+  scaleTrackBpm
 } from '../controller'
 import { useStore } from '../state/store'
 
@@ -137,13 +138,31 @@ export function Library() {
                 >
                   {track.analyzing ? '…' : track.bpm ? track.bpm.toFixed(1) : '—'}{' '}
                   {!track.analyzing && (
-                    <button
-                      className="mini-btn"
-                      title="Re-detect BPM"
-                      onClick={() => void reanalyzeTrack(track.id)}
-                    >
-                      ↻
-                    </button>
+                    <>
+                      <button
+                        className="mini-btn"
+                        title="Halve BPM"
+                        disabled={!track.bpm}
+                        onClick={() => scaleTrackBpm(track.id, 0.5)}
+                      >
+                        ×½
+                      </button>
+                      <button
+                        className="mini-btn"
+                        title="Double BPM"
+                        disabled={!track.bpm}
+                        onClick={() => scaleTrackBpm(track.id, 2)}
+                      >
+                        ×2
+                      </button>
+                      <button
+                        className="mini-btn"
+                        title="Re-detect BPM"
+                        onClick={() => void reanalyzeTrack(track.id)}
+                      >
+                        ↻
+                      </button>
+                    </>
                   )}
                 </td>
                 <td>{formatDuration(track.duration)}</td>
