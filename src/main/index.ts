@@ -107,33 +107,25 @@ function registerIpc(): void {
     await fs.writeFile(libraryFile(), JSON.stringify(data), 'utf8')
   })
 
-  ipcMain.handle('recording:save', async (event, data: ArrayBuffer) => {
-    const win = BrowserWindow.fromWebContents(event.sender)
-    if (!win) return null
+  // Recordings live in one predictable place so the app can list them.
+  const recordingsDir = (): string => path.join(app.getPath('music'), 'StemDeck Recordings')
+
+  ipcMain.handle('recording:save', async (_event, data: ArrayBuffer) => {
+    const dir = recordingsDir()
+    await fs.mkdir(dir, { recursive: true })
     // The recorder produces webm/opus; transcode to mp3 when ffmpeg exists
     const ffmpeg = await findFfmpeg()
-    const ext = ffmpeg ? 'mp3' : 'webm'
     const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
-    const result = await dialog.showSaveDialog(win, {
-      title: 'Save mix recording',
-      defaultPath: path.join(app.getPath('music'), `stemdeck-mix-${stamp}.${ext}`),
-      filters: ffmpeg
-        ? [
-            { name: 'MP3 audio', extensions: ['mp3'] },
-            { name: 'WebM audio', extensions: ['webm'] }
-          ]
-        : [{ name: 'WebM audio', extensions: ['webm'] }]
-    })
-    if (result.canceled || !result.filePath) return null
 
-    if (ffmpeg && result.filePath.toLowerCase().endsWith('.mp3')) {
+    if (ffmpeg) {
+      const outFile = path.join(dir, `stemdeck-mix-${stamp}.mp3`)
       const tmpFile = path.join(tmpdir(), `stemdeck-rec-${Date.now()}.webm`)
       await fs.writeFile(tmpFile, Buffer.from(data))
       try {
         await new Promise<void>((resolve, reject) => {
           execFile(
             ffmpeg,
-            ['-y', '-i', tmpFile, '-codec:a', 'libmp3lame', '-b:a', '320k', result.filePath!],
+            ['-y', '-i', tmpFile, '-codec:a', 'libmp3lame', '-b:a', '320k', outFile],
             { timeout: 10 * 60 * 1000, env: subprocessEnv() },
             (err) => (err ? reject(err) : resolve())
           )
@@ -141,10 +133,41 @@ function registerIpc(): void {
       } finally {
         await fs.rm(tmpFile, { force: true })
       }
-    } else {
-      await fs.writeFile(result.filePath, Buffer.from(data))
+      return outFile
     }
-    return result.filePath
+
+    const outFile = path.join(dir, `stemdeck-mix-${stamp}.webm`)
+    await fs.writeFile(outFile, Buffer.from(data))
+    return outFile
+  })
+
+  ipcMain.handle('recordings:list', async () => {
+    const dir = recordingsDir()
+    try {
+      const names = await fs.readdir(dir)
+      const items = await Promise.all(
+        names
+          .filter((n) => /\.(mp3|webm|wav)$/i.test(n))
+          .map(async (name) => {
+            const full = path.join(dir, name)
+            const stat = await fs.stat(full)
+            return { path: full, name, size: stat.size, mtime: stat.mtimeMs }
+          })
+      )
+      return items.sort((a, b) => b.mtime - a.mtime)
+    } catch {
+      return []
+    }
+  })
+
+  ipcMain.handle('recordings:open-folder', async () => {
+    const dir = recordingsDir()
+    await fs.mkdir(dir, { recursive: true })
+    await shell.openPath(dir)
+  })
+
+  ipcMain.handle('path:reveal', (_event, filePath: string) => {
+    shell.showItemInFolder(filePath)
   })
 }
 

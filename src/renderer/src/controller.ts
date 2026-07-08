@@ -6,14 +6,16 @@ import { engine, type LoadedStem } from './audio/engine'
 import { analyzeBpm, computeHiPeaks, computePeaks, type WaveformPeaks } from './audio/analysis'
 import {
   emptyDeck,
+  RECORDINGS_VIEW,
   showToast,
   updateDeck,
   updateMixer,
   updateTrack,
   useStore,
+  type Folder,
   type TrackInfo
 } from './state/store'
-import type { PersistedLibrary, PersistedTrack, StemPaths } from './types'
+import type { PersistedFolder, PersistedLibrary, PersistedTrack, StemPaths } from './types'
 
 /** Waveform peak data lives outside the store (too big for React state). */
 export const trackPeaks = new Map<string, WaveformPeaks>()
@@ -53,6 +55,7 @@ export async function initApp(): Promise<void> {
     const track = useStore.getState().library.find((t) => t.path === trackPath)
     if (track) updateTrack(track.id, { stemStatus: line.slice(0, 120) })
   })
+  void refreshRecordings()
   const youtube = await window.stemdeck.checkYoutube()
   useStore.setState((s) => ({ youtube: { ...s.youtube, available: youtube.ytdlp !== null } }))
   window.stemdeck.onYoutubeProgress(({ line }) => {
@@ -106,7 +109,7 @@ function decodePeaks(encoded: string): WaveformPeaks {
 
 /** Persist the analyzed library so tracks survive app restarts. */
 export async function saveLibrary(): Promise<void> {
-  const { library, selectedModel } = useStore.getState()
+  const { library, selectedModel, folders } = useStore.getState()
   const tracks: PersistedTrack[] = library
     .filter((t) => !t.analyzing)
     .map((t) => {
@@ -120,14 +123,17 @@ export async function saveLibrary(): Promise<void> {
         bpmConfidence: t.bpmConfidence,
         v: t.analysisV,
         peaks: peaks ? encodePeaks(peaks) : null,
-        stems: t.stems
+        stems: t.stems,
+        folderId: t.folderId
       }
     })
+  const persistedFolders: PersistedFolder[] = folders.map((f) => ({ id: f.id, name: f.name }))
   const data: PersistedLibrary = {
     version: 1,
     selectedModel,
     autoStems: useStore.getState().autoStems,
-    tracks
+    tracks,
+    folders: persistedFolders
   }
   await window.stemdeck.saveLibrary(data)
 }
@@ -135,6 +141,10 @@ export async function saveLibrary(): Promise<void> {
 async function restoreLibrary(): Promise<void> {
   const data = (await window.stemdeck.loadLibrary()) as PersistedLibrary | null
   if (!data || data.version !== 1 || !Array.isArray(data.tracks)) return
+  const folders: Folder[] = Array.isArray(data.folders)
+    ? data.folders.map((f) => ({ id: f.id, name: f.name }))
+    : []
+  const validFolderIds = new Set(folders.map((f) => f.id))
   const tracks: TrackInfo[] = []
   for (const saved of data.tracks) {
     const id = `track-${trackCounter++}`
@@ -145,6 +155,8 @@ async function restoreLibrary(): Promise<void> {
         // corrupt peaks — waveform will just be empty until re-added
       }
     }
+    // Drop a track's crate reference if that crate no longer exists.
+    const folderId = saved.folderId && validFolderIds.has(saved.folderId) ? saved.folderId : null
     tracks.push({
       id,
       path: saved.path,
@@ -157,11 +169,13 @@ async function restoreLibrary(): Promise<void> {
       analyzing: false,
       stems: saved.stems,
       separating: false,
-      stemStatus: ''
+      stemStatus: '',
+      folderId
     })
   }
   useStore.setState({
     library: tracks,
+    folders,
     selectedModel: data.selectedModel || useStore.getState().selectedModel,
     autoStems: data.autoStems ?? true
   })
@@ -199,7 +213,9 @@ export async function addDroppedFiles(files: FileList): Promise<void> {
 }
 
 async function addTrackPaths(paths: string[]): Promise<void> {
-  const { library, selectedModel } = useStore.getState()
+  const { library, selectedModel, activeFolderId } = useStore.getState()
+  // New tracks land in the crate you're currently viewing (if it's a real crate).
+  const targetFolder = activeFolderId && activeFolderId !== RECORDINGS_VIEW ? activeFolderId : null
   for (const path of paths) {
     if (library.some((t) => t.path === path)) continue
     const id = `track-${trackCounter++}`
@@ -216,7 +232,8 @@ async function addTrackPaths(paths: string[]): Promise<void> {
       analyzing: true,
       stems: null,
       separating: false,
-      stemStatus: ''
+      stemStatus: '',
+      folderId: targetFolder
     }
     useStore.setState((s) => ({ library: [...s.library, track] }))
     void analyzeTrack(track, selectedModel)
@@ -270,6 +287,73 @@ export async function reanalyzeTrack(trackId: string): Promise<void> {
   if (!track || track.analyzing) return
   updateTrack(trackId, { analyzing: true })
   await analyzeTrack({ ...track, analyzing: true }, selectedModel)
+}
+
+// ---------- Crates (folders) ----------
+
+let folderCounter = 0
+
+export function setActiveFolder(folderId: string | null): void {
+  useStore.setState({ activeFolderId: folderId })
+  if (folderId === RECORDINGS_VIEW) void refreshRecordings()
+}
+
+export function createFolder(name = 'New Crate'): void {
+  const id = `folder-${Date.now()}-${folderCounter++}`
+  useStore.setState((s) => ({ folders: [...s.folders, { id, name }], activeFolderId: id }))
+  void saveLibrary()
+}
+
+export function renameFolder(folderId: string, name: string): void {
+  const trimmed = name.trim()
+  if (!trimmed) return
+  useStore.setState((s) => ({
+    folders: s.folders.map((f) => (f.id === folderId ? { ...f, name: trimmed } : f))
+  }))
+  void saveLibrary()
+}
+
+/** Delete a crate; its tracks stay in the library, just uncategorized. */
+export function deleteFolder(folderId: string): void {
+  useStore.setState((s) => ({
+    folders: s.folders.filter((f) => f.id !== folderId),
+    library: s.library.map((t) => (t.folderId === folderId ? { ...t, folderId: null } : t)),
+    activeFolderId: s.activeFolderId === folderId ? null : s.activeFolderId
+  }))
+  void saveLibrary()
+}
+
+/** Assign a track to a crate (or null to move it back to All Tracks). */
+export function moveTrackToFolder(trackId: string, folderId: string | null): void {
+  const track = useStore.getState().library.find((t) => t.id === trackId)
+  if (!track || track.folderId === folderId) return
+  updateTrack(trackId, { folderId })
+  const folderName = folderId
+    ? useStore.getState().folders.find((f) => f.id === folderId)?.name ?? 'crate'
+    : 'All Tracks'
+  showToast(`Moved “${track.name}” to ${folderName}`)
+  void saveLibrary()
+}
+
+// ---------- Recordings ----------
+
+export async function refreshRecordings(): Promise<void> {
+  const recordings = await window.stemdeck.listRecordings()
+  useStore.setState({ recordings })
+}
+
+export async function revealRecording(filePath: string): Promise<void> {
+  await window.stemdeck.revealPath(filePath)
+}
+
+export async function openRecordingsFolder(): Promise<void> {
+  await window.stemdeck.openRecordingsFolder()
+}
+
+/** Import a saved recording into the library so it can be mixed like any track. */
+export async function addRecordingToLibrary(filePath: string): Promise<void> {
+  await addTrackPaths([filePath])
+  showToast('Recording added to your library 🎶')
 }
 
 // ---------- Deck loading ----------
@@ -624,7 +708,11 @@ export async function toggleRecording(): Promise<void> {
     useStore.setState({ recording: false })
     const data = await blob.arrayBuffer()
     const saved = await window.stemdeck.saveRecording(data)
-    if (saved) showToast(`Mix saved to ${saved}`)
+    if (saved) {
+      const name = saved.split('/').pop() ?? saved
+      showToast(`Mix saved as ${name} — find it in the Recordings crate`)
+      void refreshRecordings()
+    }
   } else {
     engine.startRecording()
     useStore.setState({ recording: true })

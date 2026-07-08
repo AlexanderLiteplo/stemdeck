@@ -21,11 +21,21 @@ export interface StemDeckApi {
   separateStems(trackPath: string, model: string): Promise<StemPaths>
   onStemProgress(callback: (event: StemProgressEvent) => void): () => void
   saveRecording(data: ArrayBuffer): Promise<string | null>
+  listRecordings(): Promise<RecordingInfo[]>
+  openRecordingsFolder(): Promise<void>
+  revealPath(filePath: string): Promise<void>
   loadLibrary(): Promise<unknown>
   saveLibrary(data: unknown): Promise<void>
   checkYoutube(): Promise<{ ytdlp: string | null; ffmpeg: string | null }>
   downloadYoutube(url: string): Promise<string[]>
   onYoutubeProgress(callback: (event: { url: string; line: string }) => void): () => void
+}
+
+export interface RecordingInfo {
+  path: string
+  name: string
+  size: number
+  mtime: number
 }
 
 export interface PersistedTrack {
@@ -40,6 +50,13 @@ export interface PersistedTrack {
   /** Base64-encoded Float32Array of waveform min/max pairs. */
   peaks: string | null
   stems: StemPaths | null
+  /** Crate this track belongs to, or null/undefined for uncategorized. */
+  folderId?: string | null
+}
+
+export interface PersistedFolder {
+  id: string
+  name: string
 }
 
 export interface PersistedLibrary {
@@ -47,6 +64,7 @@ export interface PersistedLibrary {
   selectedModel: string
   autoStems?: boolean
   tracks: PersistedTrack[]
+  folders?: PersistedFolder[]
 }
 
 declare global {

@@ -33,6 +33,10 @@ const api = {
   },
   saveRecording: (data: ArrayBuffer): Promise<string | null> =>
     ipcRenderer.invoke('recording:save', data),
+  listRecordings: (): Promise<{ path: string; name: string; size: number; mtime: number }[]> =>
+    ipcRenderer.invoke('recordings:list'),
+  openRecordingsFolder: (): Promise<void> => ipcRenderer.invoke('recordings:open-folder'),
+  revealPath: (filePath: string): Promise<void> => ipcRenderer.invoke('path:reveal', filePath),
   loadLibrary: (): Promise<unknown> => ipcRenderer.invoke('library:load'),
   saveLibrary: (data: unknown): Promise<void> => ipcRenderer.invoke('library:save', data),
   checkYoutube: (): Promise<{ ytdlp: string | null; ffmpeg: string | null }> =>

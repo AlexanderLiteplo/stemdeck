@@ -12,8 +12,8 @@ Two decks, a full mixer, beat sync, keylock pitch/tempo control, and one-click A
 - **BPM detection + SYNC** — automatic BPM/beat-phase analysis, one-button tempo match and beat-phase alignment to the other deck, pitch-bend nudge buttons for manual beatmatching
 - **Performance tools** — 4 hot cues per deck, CDJ-style cue point, manual loops (in/out/exit) and beat-snapped 1/2/4/8-beat loops
 - **Waveforms** — seekable overview waveform with playhead, cue markers, and loop region
-- **Record your mix** — one-button master recording, saved to disk
-- **Library** — add or drag-and-drop local audio files (MP3, WAV, FLAC, M4A, AAC, OGG, AIFF)
+- **Record your mix** — one-button master recording, auto-saved to `~/Music/StemDeck Recordings` and browsable in-app (reveal in Finder, or re-import a mix as a track)
+- **Library with crates** — add or drag-and-drop local audio files (MP3, WAV, FLAC, M4A, AAC, OGG, AIFF); organize them into folders (crates) with a two-pane browser: crates on the left, tracks on the right. Drag any track onto a crate to file it.
 
 ## The stem engine
 
@@ -55,7 +55,7 @@ npm start       # build + run the production bundle
 
 ## How to DJ with it
 
-1. **Add tracks** (button or drag-and-drop). BPM and beat phase are detected automatically.
+1. **Add tracks** (button or drag-and-drop). BPM and beat phase are detected automatically. Make **crates** with **+ NEW CRATE** and drag tracks onto them to organize your library.
 2. **Load** tracks by dragging them from the library onto a deck (or with the A / B buttons).
 3. Hit **SYNC** on the incoming deck to match tempo and beat phase — or beatmatch by hand with the pitch fader and ◀ ▶ nudge buttons.
 4. Enable **KEYLOCK** to change tempo without changing pitch, then use **− / + st** to shift the musical key so tracks blend harmonically.

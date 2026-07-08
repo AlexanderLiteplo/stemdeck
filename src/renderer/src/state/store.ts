@@ -1,5 +1,13 @@
 import { create } from 'zustand'
-import type { StemPaths } from '../types'
+import type { RecordingInfo, StemPaths } from '../types'
+
+/** Sentinel active-view id for the recordings pane (not a real crate). */
+export const RECORDINGS_VIEW = '__recordings__'
+
+export interface Folder {
+  id: string
+  name: string
+}
 
 export interface TrackInfo {
   id: string
@@ -16,6 +24,8 @@ export interface TrackInfo {
   stems: StemPaths | null
   separating: boolean
   stemStatus: string
+  /** Crate this track belongs to, or null for uncategorized. */
+  folderId: string | null
 }
 
 export interface StemUI {
@@ -69,6 +79,10 @@ export interface AppState {
   /** Automatically queue stem separation for newly added tracks. */
   autoStems: boolean
   library: TrackInfo[]
+  folders: Folder[]
+  /** Selected crate id, RECORDINGS_VIEW, or null for "All Tracks". */
+  activeFolderId: string | null
+  recordings: RecordingInfo[]
   decks: [DeckState, DeckState]
   mixer: [MixerChannelState, MixerChannelState]
   crossfader: number
@@ -114,6 +128,9 @@ export const useStore = create<AppState>(() => ({
   selectedModel: 'htdemucs_ft.yaml',
   autoStems: true,
   library: [],
+  folders: [],
+  activeFolderId: null,
+  recordings: [],
   decks: [emptyDeck(), emptyDeck()],
   mixer: [emptyChannel(), emptyChannel()],
   crossfader: 0.5,
