@@ -274,13 +274,11 @@ export async function reanalyzeTrack(trackId: string): Promise<void> {
 
 // ---------- Deck loading ----------
 
-export async function loadTrackToDeck(
-  deckIndex: number,
-  trackId: string,
-  withStems: boolean
-): Promise<void> {
+/** Load a track to a deck; stems are used automatically whenever they exist. */
+export async function loadTrackToDeck(deckIndex: number, trackId: string): Promise<void> {
   const track = useStore.getState().library.find((t) => t.id === trackId)
   if (!track) return
+  const withStems = track.stems !== null
   const deck = engine.decks[deckIndex]
   const { pitchRange, reverb } = useStore.getState().decks[deckIndex]
   updateDeck(deckIndex, {

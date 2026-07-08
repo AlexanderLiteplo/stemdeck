@@ -127,7 +127,15 @@ export function Library() {
           </thead>
           <tbody>
             {library.map((track) => (
-              <tr key={track.id}>
+              <tr
+                key={track.id}
+                draggable={!track.analyzing}
+                onDragStart={(e) => {
+                  e.dataTransfer.setData('text/stemdeck-track', track.id)
+                  e.dataTransfer.effectAllowed = 'copy'
+                }}
+                title="Drag onto a deck to load"
+              >
                 <td className="track-name">{track.name}</td>
                 <td
                   title={
@@ -188,37 +196,19 @@ export function Library() {
                   <button
                     className="mini-btn load-a"
                     disabled={track.analyzing}
-                    onClick={() => void loadTrackToDeck(0, track.id, false)}
+                    title="Load to deck A (with stems when available)"
+                    onClick={() => void loadTrackToDeck(0, track.id)}
                   >
                     A
                   </button>
                   <button
                     className="mini-btn load-b"
                     disabled={track.analyzing}
-                    onClick={() => void loadTrackToDeck(1, track.id, false)}
+                    title="Load to deck B (with stems when available)"
+                    onClick={() => void loadTrackToDeck(1, track.id)}
                   >
                     B
                   </button>
-                  {track.stems && (
-                    <>
-                      <button
-                        className="mini-btn load-a"
-                        disabled={track.analyzing}
-                        title="Load to deck A with stems"
-                        onClick={() => void loadTrackToDeck(0, track.id, true)}
-                      >
-                        A⧉
-                      </button>
-                      <button
-                        className="mini-btn load-b"
-                        disabled={track.analyzing}
-                        title="Load to deck B with stems"
-                        onClick={() => void loadTrackToDeck(1, track.id, true)}
-                      >
-                        B⧉
-                      </button>
-                    </>
-                  )}
                 </td>
               </tr>
             ))}

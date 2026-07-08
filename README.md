@@ -56,10 +56,10 @@ npm start       # build + run the production bundle
 ## How to DJ with it
 
 1. **Add tracks** (button or drag-and-drop). BPM and beat phase are detected automatically.
-2. **Load** a track to deck A and another to deck B.
+2. **Load** tracks by dragging them from the library onto a deck (or with the A / B buttons).
 3. Hit **SYNC** on the incoming deck to match tempo and beat phase — or beatmatch by hand with the pitch fader and ◀ ▶ nudge buttons.
 4. Enable **KEYLOCK** to change tempo without changing pitch, then use **− / + st** to shift the musical key so tracks blend harmonically.
-5. Hit **split** on a track to generate stems, then load it with **A⧉ / B⧉** — now you can kill the vocals, solo the drums, or ride each stem's volume live.
+5. Stems split automatically for new tracks (toggleable). Once split, tracks load with stem controls, so you can kill the vocals, solo the drums, or ride each stem's volume live.
 6. Blend with the EQs, filter, and crossfader. Hit **● REC MIX** to record the set.
 
 ## Architecture

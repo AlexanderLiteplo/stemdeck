@@ -106,6 +106,15 @@ body,
   min-width: 0;
 }
 
+.deck.drop-target {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent) inset;
+}
+
+.library-table tr[draggable='true'] {
+  cursor: grab;
+}
+
 .deck-a .deck-badge {
   background: var(--deck-a);
 }

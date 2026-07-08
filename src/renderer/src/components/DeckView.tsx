@@ -3,6 +3,7 @@ import { engine } from '../audio/engine'
 import {
   beatLoop,
   cuePress,
+  loadTrackToDeck,
   cyclePitchRange,
   jumpBars,
   setReverb,
@@ -52,12 +53,31 @@ export function DeckView({ deckIndex }: { deckIndex: number }) {
   const deck = useStore((s) => s.decks[deckIndex])
   const track = useStore((s) => s.library.find((t) => t.id === deck.trackId))
   const stemEngineAvailable = useStore((s) => s.stemEngine.available)
+  const [dropTarget, setDropTarget] = useState(false)
   const label = deckIndex === 0 ? 'A' : 'B'
   const effectiveBpm = deck.baseBpm ? (deck.baseBpm * deck.tempo).toFixed(1) : '—'
   const tempoPercent = ((deck.tempo - 1) * 100).toFixed(1)
 
   return (
-    <section className={`deck deck-${label.toLowerCase()}`}>
+    <section
+      className={`deck deck-${label.toLowerCase()} ${dropTarget ? 'drop-target' : ''}`}
+      onDragOver={(e) => {
+        if (e.dataTransfer.types.includes('text/stemdeck-track')) {
+          e.preventDefault()
+          e.dataTransfer.dropEffect = 'copy'
+          setDropTarget(true)
+        }
+      }}
+      onDragLeave={() => setDropTarget(false)}
+      onDrop={(e) => {
+        setDropTarget(false)
+        const trackId = e.dataTransfer.getData('text/stemdeck-track')
+        if (trackId) {
+          e.preventDefault()
+          void loadTrackToDeck(deckIndex, trackId)
+        }
+      }}
+    >
       <header className="deck-header">
         <span className="deck-badge">{label}</span>
         <span className="deck-title" title={deck.title}>
@@ -216,7 +236,9 @@ export function DeckView({ deckIndex }: { deckIndex: number }) {
               ))
             ) : deck.trackId && track ? (
               track.stems ? (
-                <span className="stems-hint">Stems ready — reload the track with the ⧉ button</span>
+                <button className="toggle" onClick={() => void loadTrackToDeck(deckIndex, track.id)}>
+                  ⟳ STEMS READY — LOAD THEM
+                </button>
               ) : track.separating ? (
                 <span className="stems-hint separating" title={track.stemStatus}>
                   Separating stems… {track.stemStatus}
