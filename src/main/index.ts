@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
 import { promises as fs, existsSync } from 'fs'
 import path from 'path'
 import { findSeparatorBin, getCachedStems, separateStems, STEM_MODELS } from './stems'
+import { subprocessEnv } from './env'
 import { checkYoutube, downloadYoutubeAudio, findFfmpeg } from './youtube'
 import { execFile } from 'child_process'
 import { tmpdir } from 'os'
@@ -133,7 +134,7 @@ function registerIpc(): void {
           execFile(
             ffmpeg,
             ['-y', '-i', tmpFile, '-codec:a', 'libmp3lame', '-b:a', '320k', result.filePath!],
-            { timeout: 10 * 60 * 1000 },
+            { timeout: 10 * 60 * 1000, env: subprocessEnv() },
             (err) => (err ? reject(err) : resolve())
           )
         })

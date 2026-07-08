@@ -1,5 +1,6 @@
 import { spawn, execFile } from 'child_process'
 import { app } from 'electron'
+import { subprocessEnv } from './env'
 import { createHash } from 'crypto'
 import { promises as fs, existsSync } from 'fs'
 import { homedir } from 'os'
@@ -40,7 +41,9 @@ export async function findSeparatorBin(): Promise<string | null> {
   const candidates = override ? [override, ...BIN_CANDIDATES] : BIN_CANDIDATES
   for (const bin of candidates) {
     const ok = await new Promise<boolean>((resolve) => {
-      execFile(bin, ['--version'], { timeout: 15000 }, (err) => resolve(!err))
+      execFile(bin, ['--version'], { timeout: 15000, env: subprocessEnv() }, (err) =>
+        resolve(!err)
+      )
     })
     if (ok) {
       resolvedBin = bin
@@ -109,7 +112,7 @@ export async function separateStems(trackPath: string, opts: SeparationOptions):
   ]
 
   await new Promise<void>((resolve, reject) => {
-    const proc = spawn(bin, args)
+    const proc = spawn(bin, args, { env: subprocessEnv() })
     let lastLines: string[] = []
     const onData = (data: Buffer) => {
       for (const raw of data.toString().split('\n')) {

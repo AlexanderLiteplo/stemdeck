@@ -1,5 +1,6 @@
 import { execFile, spawn } from 'child_process'
 import { app } from 'electron'
+import { subprocessEnv } from './env'
 import { promises as fs } from 'fs'
 import { homedir, tmpdir } from 'os'
 import path from 'path'
@@ -16,14 +17,16 @@ const FFMPEG_CANDIDATES = ['ffmpeg', '/opt/homebrew/bin/ffmpeg', '/usr/local/bin
 async function findBin(candidates: string[], versionArg: string): Promise<string | null> {
   for (const bin of candidates) {
     const ok = await new Promise<boolean>((resolve) => {
-      execFile(bin, [versionArg], { timeout: 15000 }, (err) => resolve(!err))
+      execFile(bin, [versionArg], { timeout: 15000, env: subprocessEnv() }, (err) =>
+        resolve(!err)
+      )
     })
     if (!ok) continue
     if (path.isAbsolute(bin)) return bin
     // Resolve bare names to an absolute path so callers can path.dirname() it
     // (passing a relative dir to --ffmpeg-location silently breaks yt-dlp).
     const resolved = await new Promise<string | null>((resolve) => {
-      execFile('which', [bin], { timeout: 5000 }, (err, stdout) =>
+      execFile('which', [bin], { timeout: 5000, env: subprocessEnv() }, (err, stdout) =>
         resolve(err ? null : stdout.trim() || null)
       )
     })
@@ -82,7 +85,7 @@ export async function downloadYoutubeAudio(
   }
 
   await new Promise<void>((resolve, reject) => {
-    const proc = spawn(ytdlp, args)
+    const proc = spawn(ytdlp, args, { env: subprocessEnv() })
     let lastLines: string[] = []
     const onData = (data: Buffer) => {
       for (const raw of data.toString().split('\n')) {
