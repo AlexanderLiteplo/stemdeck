@@ -4,9 +4,9 @@ import {
   addTracksFromDialog,
   addYoutubeTrack,
   loadTrackToDeck,
+  queueSeparation,
   reanalyzeTrack,
-  saveLibrary,
-  separateTrack
+  saveLibrary
 } from '../controller'
 import { useStore } from '../state/store'
 
@@ -152,13 +152,14 @@ export function Library() {
                     <span className="stems-badge">✓ ready</span>
                   ) : track.separating ? (
                     <span className="stems-badge working" title={track.stemStatus}>
-                      splitting…
+                      splitting {track.stemStatus.match(/(\d{1,3})(?:\.\d+)?%/)?.[1] ?? '…'}
+                      {track.stemStatus.match(/(\d{1,3})(?:\.\d+)?%/) ? '%' : ''}
                     </span>
                   ) : (
                     <button
                       className="mini-btn"
                       disabled={!stemEngine.available || track.analyzing}
-                      onClick={() => void separateTrack(track.id)}
+                      onClick={() => queueSeparation(track.id)}
                     >
                       split
                     </button>

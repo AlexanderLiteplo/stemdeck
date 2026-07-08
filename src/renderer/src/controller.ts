@@ -42,6 +42,13 @@ export async function initApp(): Promise<void> {
   })
   await restoreLibrary()
   void migrateStaleAnalyses()
+  // Pick up tracks that never got stems (added while the engine was
+  // missing, or interrupted mid-split by an app quit)
+  if (useStore.getState().autoStems && useStore.getState().stemEngine.available) {
+    for (const track of useStore.getState().library) {
+      if (!track.stems) queueSeparation(track.id)
+    }
+  }
   window.stemdeck.onStemProgress(({ trackPath, line }) => {
     const track = useStore.getState().library.find((t) => t.path === trackPath)
     if (track) updateTrack(track.id, { stemStatus: line.slice(0, 120) })
@@ -515,9 +522,15 @@ const stemQueue: string[] = []
 let queueRunning = false
 
 export function queueSeparation(trackId: string): void {
-  if (!useStore.getState().stemEngine.available) return
+  if (!useStore.getState().stemEngine.available) {
+    showToast('Stem engine not found — install audio-separator (see README)')
+    return
+  }
   if (stemQueue.includes(trackId)) return
   stemQueue.push(trackId)
+  if (queueRunning && stemQueue.length > 0) {
+    showToast(`Queued for stem splitting (${stemQueue.length} waiting — one runs at a time)`)
+  }
   void processStemQueue()
 }
 

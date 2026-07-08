@@ -35,6 +35,13 @@ const BIN_CANDIDATES = [
 
 let resolvedBin: string | null = null
 
+/** Spawned separators, killed on app quit so they don't run orphaned. */
+const liveProcesses = new Set<import('child_process').ChildProcess>()
+
+app.on('will-quit', () => {
+  for (const proc of liveProcesses) proc.kill()
+})
+
 export async function findSeparatorBin(): Promise<string | null> {
   if (resolvedBin) return resolvedBin
   const override = process.env.STEMDECK_AUDIO_SEPARATOR
@@ -113,9 +120,12 @@ export async function separateStems(trackPath: string, opts: SeparationOptions):
 
   await new Promise<void>((resolve, reject) => {
     const proc = spawn(bin, args, { env: subprocessEnv() })
+    liveProcesses.add(proc)
+    proc.on('close', () => liveProcesses.delete(proc))
     let lastLines: string[] = []
     const onData = (data: Buffer) => {
-      for (const raw of data.toString().split('\n')) {
+      // tqdm progress bars update via \r without newlines
+      for (const raw of data.toString().split(/[\r\n]+/)) {
         const line = raw.trim()
         if (!line) continue
         lastLines.push(line)

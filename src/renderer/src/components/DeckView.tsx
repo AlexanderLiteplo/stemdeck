@@ -11,7 +11,7 @@ import {
   loopIn,
   loopOut,
   pitchBend,
-  separateTrack,
+  queueSeparation,
   setPitch,
   setStemActive,
   setStemVolume,
@@ -206,7 +206,7 @@ export function DeckView({ deckIndex }: { deckIndex: number }) {
                 <button
                   className="toggle"
                   disabled={!stemEngineAvailable}
-                  onClick={() => separateTrack(track.id)}
+                  onClick={() => queueSeparation(track.id)}
                   title={
                     stemEngineAvailable
                       ? 'Split this track into stems with the AI separator'
