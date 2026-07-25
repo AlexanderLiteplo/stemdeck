@@ -74,6 +74,9 @@ class DeckProcessor extends AudioWorkletProcessor {
         this.position = 0
         this.reportPos = 0
         this.playing = false
+        // A new track starts with every stem audible — otherwise stems muted
+        // on the previous track stay silent while the UI shows them active.
+        this.resetStemGains()
         this.resetStretch()
         this.postPosition(true)
         break
@@ -83,6 +86,7 @@ class DeckProcessor extends AudioWorkletProcessor {
         this.playing = false
         this.position = 0
         this.reportPos = 0
+        this.resetStemGains()
         this.resetStretch()
         break
       case 'play':
@@ -130,6 +134,12 @@ class DeckProcessor extends AudioWorkletProcessor {
         this.loopEnd = msg.end
         break
     }
+  }
+
+  /** Snap every stem back to unity — no ramp, the deck is silent at this point. */
+  private resetStemGains(): void {
+    this.stemGains.fill(1)
+    this.smoothedGains.fill(1)
   }
 
   private resetStretch(): void {

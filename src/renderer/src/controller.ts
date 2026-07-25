@@ -12,6 +12,7 @@ import {
   updateMixer,
   updateTrack,
   useStore,
+  type DeckState,
   type Folder,
   type TrackInfo
 } from './state/store'
@@ -554,16 +555,76 @@ function applyLoop(deckIndex: number, active: boolean, start: number, end: numbe
   updateDeck(deckIndex, { loop: { active, start, end } })
 }
 
+const BEATS_PER_BAR = 4
+
+/**
+ * Grid spacing used when snapping a loop: bars once the loop is a whole number
+ * of bars long, beats otherwise — so a 4-bar loop always lands on a downbeat
+ * while a 1- or 2-beat loop can still sit anywhere musical.
+ */
+function loopSnapUnit(state: DeckState, lengthSeconds: number): number | null {
+  if (!state.baseBpm) return null
+  const beatLen = 60 / state.baseBpm
+  const barLen = beatLen * BEATS_PER_BAR
+  const bars = lengthSeconds / barLen
+  return bars >= 1 && Math.abs(bars - Math.round(bars)) < 0.02 ? barLen : beatLen
+}
+
+/** Quantize a source time onto the deck's beat grid. */
+function snapToGrid(state: DeckState, seconds: number, unit: number): number {
+  return state.firstBeat + Math.round((seconds - state.firstBeat) / unit) * unit
+}
+
 export function loopIn(deckIndex: number): void {
+  const state = useStore.getState().decks[deckIndex]
   const pos = engine.decks[deckIndex].getPosition()
-  const { loop } = useStore.getState().decks[deckIndex]
-  applyLoop(deckIndex, false, pos, loop.end)
+  const beatLen = state.baseBpm ? 60 / state.baseBpm : null
+  const start = beatLen ? Math.max(0, snapToGrid(state, pos, beatLen)) : pos
+  applyLoop(deckIndex, false, start, state.loop.end)
 }
 
 export function loopOut(deckIndex: number): void {
-  const { loop } = useStore.getState().decks[deckIndex]
+  const state = useStore.getState().decks[deckIndex]
   const pos = engine.decks[deckIndex].getPosition()
-  if (pos > loop.start) applyLoop(deckIndex, true, loop.start, pos)
+  const beatLen = state.baseBpm ? 60 / state.baseBpm : null
+  // Snap the tail to the grid, but never collapse the loop: a late snap that
+  // lands on or behind the in-point rounds up to the next beat instead.
+  let end = beatLen ? snapToGrid(state, pos, beatLen) : pos
+  if (beatLen && end <= state.loop.start) end += beatLen
+  if (end > state.loop.start) applyLoop(deckIndex, true, state.loop.start, end)
+}
+
+/** Slide the whole loop, keeping its length. Hold Shift (free) to bypass snapping. */
+export function moveLoop(deckIndex: number, startSeconds: number, free = false): void {
+  const state = useStore.getState().decks[deckIndex]
+  const { loop, duration } = state
+  const length = loop.end - loop.start
+  if (length <= 0) return
+  const unit = free ? null : loopSnapUnit(state, length)
+  let start = unit ? snapToGrid(state, startSeconds, unit) : startSeconds
+  start = Math.max(0, Math.min(start, Math.max(0, duration - length)))
+  applyLoop(deckIndex, loop.active, start, start + length)
+}
+
+/** Drag one loop edge. Snapped to the grid and never shorter than one beat. */
+export function resizeLoop(
+  deckIndex: number,
+  edge: 'start' | 'end',
+  seconds: number,
+  free = false
+): void {
+  const state = useStore.getState().decks[deckIndex]
+  const { loop, duration, baseBpm } = state
+  const beatLen = baseBpm ? 60 / baseBpm : null
+  const minLength = beatLen ?? 0.05
+  const t = !free && beatLen ? snapToGrid(state, seconds, beatLen) : seconds
+  if (edge === 'start') {
+    const start = Math.max(0, Math.min(t, loop.end - minLength))
+    applyLoop(deckIndex, loop.active, start, loop.end)
+  } else {
+    const end = Math.min(duration || t, Math.max(t, loop.start + minLength))
+    applyLoop(deckIndex, loop.active, loop.start, end)
+  }
 }
 
 export function loopExit(deckIndex: number): void {

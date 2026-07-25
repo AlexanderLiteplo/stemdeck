@@ -141,12 +141,22 @@ export function DeckView({ deckIndex }: { deckIndex: number }) {
             <span className="row-gap" />
             {[4, 2, 1].map((bars) => (
               <button
-                key={bars}
+                key={`back-${bars}`}
                 className="pad bar-jump"
                 onClick={() => jumpBars(deckIndex, -bars)}
                 title={`Jump back ${bars} bar${bars > 1 ? 's' : ''}`}
               >
                 ◂{bars}
+              </button>
+            ))}
+            {[1, 2, 4].map((bars) => (
+              <button
+                key={`fwd-${bars}`}
+                className="pad bar-jump"
+                onClick={() => jumpBars(deckIndex, bars)}
+                title={`Jump forward ${bars} bar${bars > 1 ? 's' : ''}`}
+              >
+                {bars}▸
               </button>
             ))}
           </div>
