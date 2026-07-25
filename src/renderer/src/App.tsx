@@ -7,6 +7,7 @@ import { Library } from './components/Library'
 import { MasterMeter } from './components/MasterMeter'
 import { Mixer } from './components/Mixer'
 import { Knob } from './components/Knob'
+import { ReelControls } from './components/ReelControls'
 
 export default function App() {
   const engineReady = useStore((s) => s.engineReady)
@@ -35,9 +36,11 @@ export default function App() {
         <button
           className={`toggle record ${recording ? 'active' : ''}`}
           onClick={() => void toggleRecording()}
+          title="Record the audio mix only"
         >
           {recording ? '■ STOP REC' : '● REC MIX'}
         </button>
+        <ReelControls />
         <span className="spacer" />
         <MasterMeter />
         <Knob

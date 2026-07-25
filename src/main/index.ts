@@ -1,4 +1,13 @@
-import { app, BrowserWindow, dialog, ipcMain, shell } from 'electron'
+import {
+  app,
+  BrowserWindow,
+  desktopCapturer,
+  dialog,
+  ipcMain,
+  session,
+  shell,
+  systemPreferences
+} from 'electron'
 import { promises as fs, existsSync } from 'fs'
 import path from 'path'
 import { findSeparatorBin, getCachedStems, separateStems, STEM_MODELS } from './stems'
@@ -6,8 +15,10 @@ import { subprocessEnv } from './env'
 import { checkYoutube, downloadYoutubeAudio, findFfmpeg } from './youtube'
 import { execFile } from 'child_process'
 import { tmpdir } from 'os'
+import { saveReel } from './video'
 
 const isDev = !app.isPackaged && !!process.env.ELECTRON_RENDERER_URL
+let mainWindow: BrowserWindow | null = null
 
 function createWindow(): BrowserWindow {
   const win = new BrowserWindow({
@@ -20,7 +31,10 @@ function createWindow(): BrowserWindow {
     webPreferences: {
       preload: path.join(__dirname, '../preload/index.js'),
       contextIsolation: true,
-      sandbox: false
+      sandbox: false,
+      // Reel capture composites on a rAF loop; throttling it when the window
+      // is occluded would drop frames out of the recording.
+      backgroundThrottling: false
     }
   })
 
@@ -141,13 +155,33 @@ function registerIpc(): void {
     return outFile
   })
 
+  ipcMain.handle('reel:save', (_event, data: ArrayBuffer) => saveReel(data))
+
+  ipcMain.handle('media:access', () => {
+    if (process.platform !== 'darwin') {
+      return { camera: 'granted', microphone: 'granted', screen: 'granted' }
+    }
+    return {
+      camera: systemPreferences.getMediaAccessStatus('camera'),
+      microphone: systemPreferences.getMediaAccessStatus('microphone'),
+      screen: systemPreferences.getMediaAccessStatus('screen')
+    }
+  })
+
+  ipcMain.handle('media:request', async (_event, kind: 'camera' | 'microphone') => {
+    if (process.platform !== 'darwin') return true
+    return systemPreferences.askForMediaAccess(kind)
+  })
+
   ipcMain.handle('recordings:list', async () => {
     const dir = recordingsDir()
     try {
       const names = await fs.readdir(dir)
       const items = await Promise.all(
         names
-          .filter((n) => /\.(mp3|webm|wav)$/i.test(n))
+          // Reels are video and live in the same folder — keep them out of the
+          // audio crate, where they would be offered as loadable tracks.
+          .filter((n) => /\.(mp3|webm|wav)$/i.test(n) && !n.startsWith('stemdeck-reel-'))
           .map(async (name) => {
             const full = path.join(dir, name)
             const stat = await fs.stat(full)
@@ -173,9 +207,37 @@ function registerIpc(): void {
 
 app.whenReady().then(() => {
   registerIpc()
-  createWindow()
+  mainWindow = createWindow()
+  mainWindow.on('closed', () => {
+    mainWindow = null
+  })
+
+  session.defaultSession.setDisplayMediaRequestHandler(async (_request, callback) => {
+    try {
+      const sources = await desktopCapturer.getSources({ types: ['window', 'screen'] })
+      const mediaSourceId =
+        mainWindow && !mainWindow.isDestroyed() ? mainWindow.getMediaSourceId() : null
+      const source = sources.find(({ id }) => id === mediaSourceId)
+      if (source) {
+        callback({ video: source })
+        return
+      }
+
+      const screen = sources.find(({ id }) => id.startsWith('screen:'))
+      callback(screen ? { video: screen } : {})
+    } catch (error) {
+      console.error('Failed to select a display media source:', error)
+      callback({})
+    }
+  })
+
   app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+    if (BrowserWindow.getAllWindows().length === 0) {
+      mainWindow = createWindow()
+      mainWindow.on('closed', () => {
+        mainWindow = null
+      })
+    }
   })
 })
 

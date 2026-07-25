@@ -10,12 +10,14 @@ import {
   showToast,
   updateDeck,
   updateMixer,
+  updateReel,
   updateTrack,
   useStore,
   type DeckState,
   type Folder,
   type TrackInfo
 } from './state/store'
+import { ReelRecorder } from './video/reel'
 import type { PersistedFolder, PersistedLibrary, PersistedTrack, StemPaths } from './types'
 
 /** Waveform peak data lives outside the store (too big for React state). */
@@ -778,4 +780,128 @@ export async function toggleRecording(): Promise<void> {
     engine.startRecording()
     useStore.setState({ recording: true })
   }
+}
+
+// ---------- Video reels ----------
+
+let reel: ReelRecorder | null = null
+
+/** Live camera feed for the framing preview, or null when nothing is running. */
+export function reelCamera(): MediaStream | null {
+  return reel?.camera ?? null
+}
+
+export function reelElapsedSeconds(): number {
+  return reel ? (performance.now() - reel.startedAt) / 1000 : 0
+}
+
+function mediaAccessHint(kind: 'camera' | 'microphone' | 'screen'): string {
+  const pane =
+    kind === 'screen' ? 'Screen & System Recording' : kind === 'camera' ? 'Camera' : 'Microphone'
+  return `StemDeck needs ${kind} access — enable it in System Settings ▸ Privacy & Security ▸ ${pane}, then restart the app`
+}
+
+export async function toggleReelRecording(): Promise<void> {
+  if (reel) {
+    const recorder = reel
+    reel = null
+    updateReel({ recording: false, mic: false, saving: true })
+    try {
+      const blob = await recorder.stop()
+      const saved = await window.stemdeck.saveReel(await blob.arrayBuffer())
+      if (saved) {
+        const name = saved.split('/').pop() ?? saved
+        showToast(`Reel saved as ${name}`)
+        // Reels are made to be posted, so put the file in front of you.
+        void window.stemdeck.revealPath(saved)
+      } else {
+        showToast('Reel could not be saved')
+      }
+    } finally {
+      updateReel({ saving: false })
+    }
+    return
+  }
+
+  // Prompt up front so a denied permission surfaces as advice, not a black frame.
+  const access = await window.stemdeck.mediaAccess()
+  if (access.camera !== 'granted' && !(await window.stemdeck.requestMediaAccess('camera'))) {
+    showToast(mediaAccessHint('camera'))
+    return
+  }
+  if (access.screen === 'denied' || access.screen === 'restricted') {
+    showToast(mediaAccessHint('screen'))
+    return
+  }
+
+  const recorder = new ReelRecorder()
+  recorder.onScreenEnded = () => {
+    if (reel === recorder) void toggleReelRecording()
+  }
+  try {
+    await recorder.start()
+  } catch (err) {
+    showToast(`Could not start the reel: ${(err as Error).message}`)
+    return
+  }
+  reel = recorder
+  updateReel({ recording: true, mic: false, preview: false })
+}
+
+/** Mic can be flipped mid-take; the stream opens on first use. */
+export async function toggleReelMic(): Promise<void> {
+  const { mic } = useStore.getState().reel
+  if (!reel) {
+    updateReel({ mic: !mic })
+    return
+  }
+  if (mic) {
+    reel.muteMic()
+    updateReel({ mic: false })
+    return
+  }
+  const access = await window.stemdeck.mediaAccess()
+  if (
+    access.microphone !== 'granted' &&
+    !(await window.stemdeck.requestMediaAccess('microphone'))
+  ) {
+    showToast(mediaAccessHint('microphone'))
+    return
+  }
+  try {
+    await reel.enableMic()
+    updateReel({ mic: true })
+  } catch (err) {
+    showToast(`Could not open the mic: ${(err as Error).message}`)
+  }
+}
+
+/**
+ * Self-view for framing. It runs its own short-lived camera stream and is only
+ * available while stopped — during a take it would be captured back into the
+ * bottom half of the reel.
+ */
+let previewStream: MediaStream | null = null
+
+export async function toggleCameraPreview(): Promise<void> {
+  const { preview } = useStore.getState().reel
+  if (preview) {
+    previewStream?.getTracks().forEach((t) => t.stop())
+    previewStream = null
+    updateReel({ preview: false })
+    return
+  }
+  try {
+    previewStream = await navigator.mediaDevices.getUserMedia({
+      video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: 'user' },
+      audio: false
+    })
+    updateReel({ preview: true })
+  } catch {
+    showToast(mediaAccessHint('camera'))
+  }
+}
+
+export function cameraPreviewStream(): MediaStream | null {
+  return previewStream
 }

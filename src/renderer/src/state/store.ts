@@ -88,6 +88,15 @@ export interface AppState {
   crossfader: number
   masterGain: number
   recording: boolean
+  /** Video reel capture: camera + deck composited for Instagram. */
+  reel: {
+    recording: boolean
+    /** Mic is opt-in per take, so a reel never picks up the room by accident. */
+    mic: boolean
+    /** Self-view for framing; hidden while recording so it stays out of the capture. */
+    preview: boolean
+    saving: boolean
+  }
   toast: string | null
   youtube: { available: boolean; downloading: boolean; status: string }
 }
@@ -136,9 +145,14 @@ export const useStore = create<AppState>(() => ({
   crossfader: 0.5,
   masterGain: 1,
   recording: false,
+  reel: { recording: false, mic: false, preview: false, saving: false },
   toast: null,
   youtube: { available: false, downloading: false, status: '' }
 }))
+
+export function updateReel(patch: Partial<AppState['reel']>): void {
+  useStore.setState((state) => ({ reel: { ...state.reel, ...patch } }))
+}
 
 export function updateDeck(index: number, patch: Partial<DeckState>): void {
   useStore.setState((state) => {

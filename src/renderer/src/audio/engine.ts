@@ -237,6 +237,10 @@ export class AudioEngine {
   private recorder: MediaRecorder | null = null
   private recordChunks: Blob[] = []
   private ready = false
+  /** Separate tap for video reels: master mix plus an optional mic. */
+  private reelDest!: MediaStreamAudioDestinationNode
+  private micGain!: GainNode
+  private micSource: MediaStreamAudioSourceNode | null = null
 
   async init(): Promise<void> {
     if (this.ready) return
@@ -258,6 +262,14 @@ export class AudioEngine {
     this.limiter.connect(this.ctx.destination)
     this.limiter.connect(this.analyser)
     this.limiter.connect(this.recordDest)
+
+    // The mic reaches the reel tap only — routing it anywhere near the master
+    // would put the room back through the speakers.
+    this.reelDest = this.ctx.createMediaStreamDestination()
+    this.limiter.connect(this.reelDest)
+    this.micGain = this.ctx.createGain()
+    this.micGain.gain.value = 0
+    this.micGain.connect(this.reelDest)
 
     const impulse = makeReverbImpulse(this.ctx)
     this.decks = [
@@ -281,6 +293,27 @@ export class AudioEngine {
 
   async decode(data: ArrayBuffer): Promise<AudioBuffer> {
     return this.ctx.decodeAudioData(data)
+  }
+
+  /** Master mix (+ mic when unmuted) for the video recorder. */
+  get reelAudioStream(): MediaStream {
+    return this.reelDest.stream
+  }
+
+  attachMic(stream: MediaStream): void {
+    this.detachMic()
+    this.micSource = this.ctx.createMediaStreamSource(stream)
+    this.micSource.connect(this.micGain)
+  }
+
+  detachMic(): void {
+    this.micSource?.disconnect()
+    this.micSource = null
+  }
+
+  /** 0 mutes the mic without dropping the stream, so it can be toggled live. */
+  setMicLevel(value: number): void {
+    this.micGain.gain.setTargetAtTime(value, this.ctx.currentTime, 0.02)
   }
 
   startRecording(): void {

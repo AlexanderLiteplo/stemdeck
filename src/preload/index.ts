@@ -33,6 +33,11 @@ const api = {
   },
   saveRecording: (data: ArrayBuffer): Promise<string | null> =>
     ipcRenderer.invoke('recording:save', data),
+  saveReel: (data: ArrayBuffer): Promise<string | null> => ipcRenderer.invoke('reel:save', data),
+  mediaAccess: (): Promise<{ camera: string; microphone: string; screen: string }> =>
+    ipcRenderer.invoke('media:access'),
+  requestMediaAccess: (kind: 'camera' | 'microphone'): Promise<boolean> =>
+    ipcRenderer.invoke('media:request', kind),
   listRecordings: (): Promise<{ path: string; name: string; size: number; mtime: number }[]> =>
     ipcRenderer.invoke('recordings:list'),
   openRecordingsFolder: (): Promise<void> => ipcRenderer.invoke('recordings:open-folder'),
