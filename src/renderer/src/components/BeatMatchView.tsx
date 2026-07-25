@@ -93,6 +93,24 @@ export function BeatMatchView() {
         }
       }
 
+      // Loop region, mapped through the same real-time transform as the waveform
+      if (state.loop.active && state.loop.end > state.loop.start) {
+        const toX = (srcT: number): number => w / 2 + ((srcT - pos) / rate) * pxPerSec
+        const x1 = toX(state.loop.start)
+        const x2 = toX(state.loop.end)
+        if (x2 > 0 && x1 < w) {
+          const left = Math.max(x1, 0)
+          const right = Math.min(x2, w)
+          ctx.fillStyle = 'rgba(74, 222, 128, 0.16)'
+          ctx.fillRect(left, laneY, right - left, laneH)
+          ctx.fillStyle = '#4ade80'
+          // Only draw an edge that is actually on screen, so an off-screen
+          // loop boundary never gets pinned to the edge of the lane.
+          if (x1 >= 0 && x1 <= w) ctx.fillRect(x1, laneY, 2, laneH)
+          if (x2 >= 0 && x2 <= w) ctx.fillRect(x2 - 2, laneY, 2, laneH)
+        }
+      }
+
       // Effective BPM readout
       ctx.fillStyle = color
       ctx.font = 'bold 10px sans-serif'
