@@ -287,6 +287,76 @@ button:disabled {
   }
 }
 
+/* ---------- Video reels ---------- */
+
+.reel-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.toggle.record.reel.active {
+  border-color: var(--accent);
+  background: #241d47;
+  color: #c9baff;
+}
+
+.reel-clock {
+  font-size: 11px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  min-width: 34px;
+}
+
+.mini-toggle {
+  padding: 5px 7px;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--dim);
+}
+
+.mini-toggle.active {
+  border-color: var(--green);
+  background: #10301d;
+  color: var(--green);
+}
+
+.mini-toggle:disabled {
+  opacity: 0.4;
+}
+
+/* Floating self-view; only shown while stopped, so it never lands in a capture. */
+.camera-preview {
+  position: fixed;
+  right: 16px;
+  bottom: 16px;
+  z-index: 40;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+}
+
+.camera-preview video {
+  display: block;
+  width: 200px;
+  /* 9:8 — the same crop the top half of the reel uses */
+  height: 178px;
+  object-fit: cover;
+  border-radius: 6px;
+  background: #000;
+}
+
+.camera-preview span {
+  display: block;
+  padding-top: 4px;
+  font-size: 9px;
+  text-align: center;
+  color: var(--dim);
+}
+
 .key-shift,
 .bend {
   display: flex;

@@ -21,6 +21,9 @@ export interface StemDeckApi {
   separateStems(trackPath: string, model: string): Promise<StemPaths>
   onStemProgress(callback: (event: StemProgressEvent) => void): () => void
   saveRecording(data: ArrayBuffer): Promise<string | null>
+  saveReel(data: ArrayBuffer): Promise<string | null>
+  mediaAccess(): Promise<{ camera: string; microphone: string; screen: string }>
+  requestMediaAccess(kind: 'camera' | 'microphone'): Promise<boolean>
   listRecordings(): Promise<RecordingInfo[]>
   openRecordingsFolder(): Promise<void>
   revealPath(filePath: string): Promise<void>

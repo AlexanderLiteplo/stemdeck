@@ -27,7 +27,14 @@
     "files": ["out/**/*", "package.json"],
     "mac": {
       "category": "public.app-category.music",
-      "target": ["dir"]
+      "target": ["dir"],
+      "hardenedRuntime": true,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "extendInfo": {
+        "NSCameraUsageDescription": "StemDeck records your camera for video reels of your mixes.",
+        "NSMicrophoneUsageDescription": "StemDeck records your microphone so you can talk over your mixes."
+      }
     }
   },
   "dependencies": {
