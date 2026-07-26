@@ -7,6 +7,10 @@
  *                                                                                             \-> recorder tap
  */
 
+import type { AutotuneSettings } from '../../../worklet/autotune-dsp'
+
+export type { AutotuneSettings } from '../../../worklet/autotune-dsp'
+
 export const STEM_NAMES = ['Vocals', 'Drums', 'Bass', 'Other'] as const
 
 export interface LoadedStem {
@@ -17,6 +21,8 @@ export interface LoadedStem {
 export type DeckMessage =
   | { type: 'position'; frames: number; playing: boolean }
   | { type: 'ended' }
+
+type AutotuneMessage = { type: 'pitch'; detected: number; target: number }
 
 /** Synthetic hall impulse response: exponentially decaying stereo noise. */
 function makeReverbImpulse(ctx: AudioContext, seconds = 2.8, decay = 3.5): AudioBuffer {
@@ -33,6 +39,7 @@ function makeReverbImpulse(ctx: AudioContext, seconds = 2.8, decay = 3.5): Audio
 
 export class DeckEngine {
   readonly node: AudioWorkletNode
+  readonly autotune: AudioWorkletNode
   readonly trim: GainNode
   readonly eqLow: BiquadFilterNode
   readonly eqMid: BiquadFilterNode
@@ -52,11 +59,17 @@ export class DeckEngine {
   duration = 0
   onEnded: (() => void) | null = null
   onPosition: ((seconds: number) => void) | null = null
+  onPitch: ((detected: number, target: number) => void) | null = null
 
   constructor(ctx: AudioContext, destination: AudioNode, reverbImpulse: AudioBuffer) {
     this.ctx = ctx
     this.node = new AudioWorkletNode(ctx, 'deck-processor', {
       numberOfInputs: 0,
+      numberOfOutputs: 2,
+      outputChannelCount: [2, 2]
+    })
+    this.autotune = new AudioWorkletNode(ctx, 'autotune-processor', {
+      numberOfInputs: 1,
       numberOfOutputs: 1,
       outputChannelCount: [2]
     })
@@ -83,7 +96,7 @@ export class DeckEngine {
     this.xfGain = ctx.createGain()
 
     this.node
-      .connect(this.trim)
+      .connect(this.trim, 0, 0)
       .connect(this.eqLow)
       .connect(this.eqMid)
       .connect(this.eqHigh)
@@ -92,6 +105,8 @@ export class DeckEngine {
       .connect(this.fader)
       .connect(this.xfGain)
       .connect(destination)
+    this.node.connect(this.autotune, 1, 0)
+    this.autotune.connect(this.trim)
 
     // Reverb: post-filter send mixed back in pre-fader, so the channel
     // fader and crossfader still control the wet tail.
@@ -112,6 +127,10 @@ export class DeckEngine {
         this.playingFlag = false
         this.onEnded?.()
       }
+    }
+    this.autotune.port.onmessage = (e: MessageEvent<AutotuneMessage>) => {
+      const msg = e.data
+      if (msg.type === 'pitch') this.onPitch?.(msg.detected, msg.target)
     }
   }
 
@@ -167,6 +186,13 @@ export class DeckEngine {
 
   setKeylock(enabled: boolean): void {
     this.node.port.postMessage({ type: 'keylock', enabled })
+  }
+
+  setAutotune(settings: Partial<AutotuneSettings>): void {
+    this.autotune.port.postMessage({ type: 'settings', settings })
+    if (settings.enabled !== undefined) {
+      this.node.port.postMessage({ type: 'vocalRoute', enabled: settings.enabled })
+    }
   }
 
   setStemGain(index: number, value: number): void {
@@ -245,7 +271,10 @@ export class AudioEngine {
   async init(): Promise<void> {
     if (this.ready) return
     this.ctx = new AudioContext({ latencyHint: 'interactive' })
-    await this.ctx.audioWorklet.addModule('worklets/deck-processor.js')
+    await Promise.all([
+      this.ctx.audioWorklet.addModule('worklets/deck-processor.js'),
+      this.ctx.audioWorklet.addModule('worklets/autotune-processor.js')
+    ])
 
     this.master = this.ctx.createGain()
     this.limiter = this.ctx.createDynamicsCompressor()

@@ -12,6 +12,7 @@
  * identically in both playback paths.
  */
 import { SimpleFilter, SoundTouch, type SoundTouchSource } from 'soundtouchjs'
+import { AUTOTUNE_LATENCY_SAMPLES } from './autotune-latency'
 
 interface Stem {
   l: Float32Array
@@ -33,6 +34,7 @@ type InMessage =
   | { type: 'tempo'; value: number }
   | { type: 'pitch'; semitones: number }
   | { type: 'keylock'; enabled: boolean }
+  | { type: 'vocalRoute'; enabled: boolean }
   | { type: 'stemGain'; index: number; value: number }
   | { type: 'loop'; enabled: boolean; start: number; end: number }
 
@@ -45,11 +47,14 @@ class DeckProcessor extends AudioWorkletProcessor {
   private playing = false
   /** Source read head. In keylock mode this feeds SoundTouch and runs AHEAD of the audio. */
   private position = 0
+  /** Independent read head for the lazily-created vocal SoundTouch pipeline. */
+  private positionVocal = 0
   /** Source time of the audio actually being emitted — what the UI should show. */
   private reportPos = 0
   private tempo = 1
   private pitchSemitones = 0
   private keylock = false
+  private vocalRoute = false
   private stemGains = [1, 1, 1, 1]
   private smoothedGains = [1, 1, 1, 1]
   private loopEnabled = false
@@ -58,7 +63,10 @@ class DeckProcessor extends AudioWorkletProcessor {
 
   private st: SoundTouch | null = null
   private filter: SimpleFilter | null = null
+  private stVocal: SoundTouch | null = null
+  private filterVocal: SimpleFilter | null = null
   private stBuffer = new Float32Array(128 * 2)
+  private stBufferVocal = new Float32Array(128 * 2)
   private blockCounter = 0
 
   constructor() {
@@ -72,6 +80,7 @@ class DeckProcessor extends AudioWorkletProcessor {
         this.stems = msg.stems
         this.length = msg.stems.length > 0 ? msg.stems[0].l.length : 0
         this.position = 0
+        this.syncVocalPosition()
         this.reportPos = 0
         this.playing = false
         // A new track starts with every stem audible — otherwise stems muted
@@ -85,6 +94,7 @@ class DeckProcessor extends AudioWorkletProcessor {
         this.length = 0
         this.playing = false
         this.position = 0
+        this.syncVocalPosition()
         this.reportPos = 0
         this.resetStemGains()
         this.resetStretch()
@@ -98,6 +108,7 @@ class DeckProcessor extends AudioWorkletProcessor {
         break
       case 'seek':
         this.position = Math.max(0, Math.min(msg.frames, this.length - 1))
+        this.syncVocalPosition()
         this.reportPos = this.position
         this.resetStretch()
         this.postPosition(true)
@@ -107,6 +118,7 @@ class DeckProcessor extends AudioWorkletProcessor {
       // Based on the AUDIBLE position, which in keylock lags the read head.
       case 'jumpBy':
         this.position = Math.max(0, Math.min(this.reportPos + msg.frames, this.length - 1))
+        this.syncVocalPosition()
         this.reportPos = this.position
         this.resetStretch()
         this.postPosition(true)
@@ -123,7 +135,22 @@ class DeckProcessor extends AudioWorkletProcessor {
         this.keylock = msg.enabled
         // Continue from what the listener is hearing, not the read head
         this.position = this.reportPos
+        this.syncVocalPosition()
         this.resetStretch()
+        break
+      case 'vocalRoute':
+        if (this.vocalRoute !== msg.enabled) {
+          this.vocalRoute = msg.enabled
+          // SoundTouch may already have queued audio from the old routing.
+          // Rebuild from the audible point so both new pipelines start aligned.
+          if (this.keylock) {
+            this.position = this.reportPos
+            this.resetStretch()
+          }
+          // Re-apply the read-ahead in both modes: the lead only exists while
+          // the route is on, so it has to be added and removed with it.
+          this.syncVocalPosition()
+        }
         break
       case 'stemGain':
         if (msg.index >= 0 && msg.index < 4) this.stemGains[msg.index] = msg.value
@@ -142,15 +169,31 @@ class DeckProcessor extends AudioWorkletProcessor {
     this.smoothedGains.fill(1)
   }
 
+  /**
+   * Park the vocal read head AHEAD of the main one by exactly the latency the
+   * autotune path will add, so the corrected vocal lands back in time with the
+   * rest of the mix. The lead is in source samples, so it scales with tempo.
+   */
+  private syncVocalPosition(): void {
+    const lead = this.vocalRoute ? AUTOTUNE_LATENCY_SAMPLES * this.tempo : 0
+    this.positionVocal = this.position + lead
+  }
+
   private resetStretch(): void {
     this.st = null
     this.filter = null
+    this.stVocal = null
+    this.filterVocal = null
   }
 
   private updateStretchParams(): void {
     if (this.st) {
       this.st.tempo = this.tempo
       this.st.pitchSemitones = this.pitchSemitones
+    }
+    if (this.stVocal) {
+      this.stVocal.tempo = this.tempo
+      this.stVocal.pitchSemitones = this.pitchSemitones
     }
   }
 
@@ -172,7 +215,8 @@ class DeckProcessor extends AudioWorkletProcessor {
           if (pos >= this.length) break
           let l = 0
           let r = 0
-          for (let s = 0; s < this.stems.length; s++) {
+          const firstStem = this.vocalRoute && this.stems.length > 1 ? 1 : 0
+          for (let s = firstStem; s < this.stems.length; s++) {
             const g = this.smoothGain(s)
             l += this.stems[s].l[pos] * g
             r += this.stems[s].r[pos] * g
@@ -188,6 +232,38 @@ class DeckProcessor extends AudioWorkletProcessor {
     this.st = st
     this.filter = new SimpleFilter(source, st)
     return this.filter
+  }
+
+  private ensureVocalStretch(): SimpleFilter {
+    if (this.filterVocal && this.stVocal) return this.filterVocal
+    const st = new SoundTouch()
+    st.tempo = this.tempo
+    st.pitchSemitones = this.pitchSemitones
+    const source: SoundTouchSource = {
+      extract: (target, numFrames) => {
+        let written = 0
+        while (written < numFrames) {
+          if (
+            this.loopEnabled &&
+            this.positionVocal >= this.loopEnd &&
+            this.loopEnd > this.loopStart
+          ) {
+            this.positionVocal = this.loopStart + (this.positionVocal - this.loopEnd)
+          }
+          const pos = Math.floor(this.positionVocal)
+          if (pos >= this.length) break
+          const g = this.smoothGain(0)
+          target[written * 2] = this.stems[0].l[pos] * g
+          target[written * 2 + 1] = this.stems[0].r[pos] * g
+          this.positionVocal += 1
+          written++
+        }
+        return written
+      }
+    }
+    this.stVocal = st
+    this.filterVocal = new SimpleFilter(source, st)
+    return this.filterVocal
   }
 
   private smoothGain(stemIndex: number): number {
@@ -209,6 +285,7 @@ class DeckProcessor extends AudioWorkletProcessor {
   private ended(): void {
     this.playing = false
     this.position = this.length > 0 ? this.length - 1 : 0
+    this.syncVocalPosition()
     this.reportPos = this.position
     this.port.postMessage({ type: 'ended' })
     this.postPosition(true)
@@ -218,7 +295,14 @@ class DeckProcessor extends AudioWorkletProcessor {
     const out = outputs[0]
     const left = out[0]
     const right = out.length > 1 ? out[1] : out[0]
+    const vocalOut = outputs[1]
+    const vocalLeft = vocalOut[0]
+    const vocalRight = vocalOut.length > 1 ? vocalOut[1] : vocalOut[0]
     const numFrames = left.length
+    const routeVocals = this.vocalRoute && this.stems.length > 1
+
+    vocalLeft.fill(0)
+    vocalRight.fill(0)
 
     if (!this.playing || this.stems.length === 0 || this.length === 0) {
       left.fill(0)
@@ -237,6 +321,17 @@ class DeckProcessor extends AudioWorkletProcessor {
       for (let i = got; i < numFrames; i++) {
         left[i] = 0
         right[i] = 0
+      }
+      if (routeVocals) {
+        const vocalFilter = this.ensureVocalStretch()
+        if (this.stBufferVocal.length < numFrames * 2) {
+          this.stBufferVocal = new Float32Array(numFrames * 2)
+        }
+        const vocalGot = vocalFilter.extract(this.stBufferVocal, numFrames)
+        for (let i = 0; i < vocalGot; i++) {
+          vocalLeft[i] = this.stBufferVocal[i * 2]
+          vocalRight[i] = this.stBufferVocal[i * 2 + 1]
+        }
       }
       // Advance the audible position by the source consumed per emitted
       // frame (= tempo), wrapping with the loop like the read head does.
@@ -268,8 +363,23 @@ class DeckProcessor extends AudioWorkletProcessor {
           const g = this.smoothGain(s)
           const sl = this.stems[s].l
           const sr = this.stems[s].r
-          l += (sl[pos] + (sl[pos + 1] - sl[pos]) * frac) * g
-          r += (sr[pos] + (sr[pos + 1] - sr[pos]) * frac) * g
+          if (routeVocals && s === 0) {
+            // Read the vocal ahead by the autotune latency so the corrected
+            // vocal comes back out in time with the rest of the mix.
+            let vp = this.position + AUTOTUNE_LATENCY_SAMPLES * rate
+            if (this.loopEnabled && this.loopEnd > this.loopStart) {
+              while (vp >= this.loopEnd) vp -= this.loopEnd - this.loopStart
+            }
+            if (vp < this.length - 1) {
+              const vpi = Math.floor(vp)
+              const vfrac = vp - vpi
+              vocalLeft[i] = (sl[vpi] + (sl[vpi + 1] - sl[vpi]) * vfrac) * g
+              vocalRight[i] = (sr[vpi] + (sr[vpi + 1] - sr[vpi]) * vfrac) * g
+            }
+          } else {
+            l += (sl[pos] + (sl[pos + 1] - sl[pos]) * frac) * g
+            r += (sr[pos] + (sr[pos + 1] - sr[pos]) * frac) * g
+          }
         }
         left[i] = l
         right[i] = r

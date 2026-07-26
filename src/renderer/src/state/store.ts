@@ -40,6 +40,19 @@ export interface LoopState {
   end: number
 }
 
+/** Pitch correction applied to the vocal stem. Needs a separated track. */
+export interface AutotuneState {
+  enabled: boolean
+  /** Root note, 0 = C .. 11 = B. */
+  key: number
+  scale: 'major' | 'minor' | 'chromatic'
+  /** 0 = untouched, 1 = fully snapped to the target note. */
+  strength: number
+  /** Retune time in ms; 0 is the instant, hard-tuned sound. */
+  retuneMs: number
+  mix: number
+}
+
 export interface DeckState {
   trackId: string | null
   title: string
@@ -58,6 +71,7 @@ export interface DeckState {
   cuePoint: number
   hotCues: (number | null)[]
   loop: LoopState
+  autotune: AutotuneState
   stems: StemUI[]
   usingStems: boolean
 }
@@ -117,6 +131,7 @@ export const emptyDeck = (): DeckState => ({
   cuePoint: 0,
   hotCues: [null, null, null, null],
   loop: { active: false, start: 0, end: 0 },
+  autotune: { enabled: false, key: 0, scale: 'chromatic', strength: 1, retuneMs: 0, mix: 1 },
   stems: [],
   usingStems: false
 })

@@ -13,6 +13,7 @@ import {
   updateReel,
   updateTrack,
   useStore,
+  type AutotuneState,
   type DeckState,
   type Folder,
   type TrackInfo
@@ -35,6 +36,9 @@ export async function initApp(): Promise<void> {
   await engine.init()
   engine.decks.forEach((deck, i) => {
     deck.onEnded = () => updateDeck(i, { playing: false })
+    deck.onPitch = (detected, target) => {
+      deckPitch[i] = { detected, target }
+    }
   })
   const [models, stemEngine] = await Promise.all([
     window.stemdeck.stemModels(),
@@ -660,6 +664,23 @@ export function jumpBars(deckIndex: number, bars: number): void {
   engine.decks[deckIndex].jumpBy(seconds)
 }
 
+// ---------- Autotune ----------
+
+/**
+ * Live pitch readout per deck. Kept out of the store: it updates far faster
+ * than React should re-render, so the meter polls it instead.
+ */
+export const deckPitch: { detected: number; target: number }[] = [
+  { detected: 0, target: 0 },
+  { detected: 0, target: 0 }
+]
+
+export function setAutotune(deckIndex: number, patch: Partial<AutotuneState>): void {
+  const current = useStore.getState().decks[deckIndex].autotune
+  engine.decks[deckIndex].setAutotune(patch)
+  updateDeck(deckIndex, { autotune: { ...current, ...patch } })
+}
+
 // ---------- Stems ----------
 
 export function setStemActive(deckIndex: number, stemIndex: number, active: boolean): void {
@@ -829,11 +850,9 @@ export async function toggleReelRecording(): Promise<void> {
     showToast(mediaAccessHint('camera'))
     return
   }
-  if (access.screen === 'denied' || access.screen === 'restricted') {
-    showToast(mediaAccessHint('screen'))
-    return
-  }
-
+  // Screen access is deliberately NOT pre-checked: macOS reports it as denied
+  // until the first grant, and only raises its prompt when a capture is really
+  // attempted. Bailing here would suppress the very prompt we need.
   const recorder = new ReelRecorder()
   recorder.onScreenEnded = () => {
     if (reel === recorder) void toggleReelRecording()
@@ -841,7 +860,13 @@ export async function toggleReelRecording(): Promise<void> {
   try {
     await recorder.start()
   } catch (err) {
-    showToast(`Could not start the reel: ${(err as Error).message}`)
+    const denied = (err as Error).name === 'NotAllowedError'
+    if (denied && access.screen !== 'granted') {
+      showToast(mediaAccessHint('screen'))
+      void window.stemdeck.openPrivacySettings('screen')
+    } else {
+      showToast(`Could not start the reel: ${(err as Error).message}`)
+    }
     return
   }
   reel = recorder
