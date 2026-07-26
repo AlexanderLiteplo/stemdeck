@@ -24,6 +24,7 @@ export interface StemDeckApi {
   saveReel(data: ArrayBuffer): Promise<string | null>
   mediaAccess(): Promise<{ camera: string; microphone: string; screen: string }>
   requestMediaAccess(kind: 'camera' | 'microphone'): Promise<boolean>
+  openPrivacySettings(kind: 'camera' | 'microphone' | 'screen'): Promise<void>
   listRecordings(): Promise<RecordingInfo[]>
   openRecordingsFolder(): Promise<void>
   revealPath(filePath: string): Promise<void>

@@ -38,6 +38,8 @@ const api = {
     ipcRenderer.invoke('media:access'),
   requestMediaAccess: (kind: 'camera' | 'microphone'): Promise<boolean> =>
     ipcRenderer.invoke('media:request', kind),
+  openPrivacySettings: (kind: 'camera' | 'microphone' | 'screen'): Promise<void> =>
+    ipcRenderer.invoke('media:settings', kind),
   listRecordings: (): Promise<{ path: string; name: string; size: number; mtime: number }[]> =>
     ipcRenderer.invoke('recordings:list'),
   openRecordingsFolder: (): Promise<void> => ipcRenderer.invoke('recordings:open-folder'),

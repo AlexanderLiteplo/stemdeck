@@ -23,6 +23,7 @@ import {
   togglePlay
 } from '../controller'
 import { useStore } from '../state/store'
+import { AutotunePanel } from './AutotunePanel'
 import { Fader } from './Fader'
 import { Knob } from './Knob'
 import { Waveform } from './Waveform'
@@ -222,6 +223,8 @@ export function DeckView({ deckIndex }: { deckIndex: number }) {
               </button>
             </div>
           </div>
+
+          <AutotunePanel deckIndex={deckIndex} />
 
           <div className="stems-panel">
             {deck.usingStems ? (

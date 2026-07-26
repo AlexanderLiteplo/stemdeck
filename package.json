@@ -10,7 +10,7 @@
     "url": "https://github.com/AlexanderLiteplo/stemdeck.git"
   },
   "scripts": {
-    "build:worklet": "esbuild src/worklet/deck-processor.ts --bundle --format=iife --outfile=src/renderer/public/worklets/deck-processor.js",
+    "build:worklet": "esbuild src/worklet/deck-processor.ts --bundle --format=iife --outfile=src/renderer/public/worklets/deck-processor.js && esbuild src/worklet/autotune-processor.ts --bundle --format=iife --outfile=src/renderer/public/worklets/autotune-processor.js",
     "dev": "npm run build:worklet && electron-vite dev",
     "build": "npm run build:worklet && electron-vite build",
     "start": "npm run build && electron-vite preview",

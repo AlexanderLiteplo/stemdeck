@@ -173,6 +173,19 @@ function registerIpc(): void {
     return systemPreferences.askForMediaAccess(kind)
   })
 
+  // macOS only ever raises each privacy prompt once, so a dismissed prompt can
+  // only be undone in System Settings — take the user straight there.
+  ipcMain.handle('media:settings', async (_event, kind: 'camera' | 'microphone' | 'screen') => {
+    if (process.platform !== 'darwin') return
+    const pane =
+      kind === 'screen'
+        ? 'Privacy_ScreenCapture'
+        : kind === 'camera'
+          ? 'Privacy_Camera'
+          : 'Privacy_Microphone'
+    await shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${pane}`)
+  })
+
   ipcMain.handle('recordings:list', async () => {
     const dir = recordingsDir()
     try {

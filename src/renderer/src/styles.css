@@ -287,6 +287,58 @@ button:disabled {
   }
 }
 
+/* ---------- Autotune ---------- */
+
+.autotune-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #10131c;
+}
+
+.autotune-row.on {
+  border-color: var(--accent);
+  background: #171432;
+}
+
+.mini-select {
+  padding: 4px 5px;
+  font-family: inherit;
+  font-size: 10px;
+  font-weight: 700;
+  color: var(--text);
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+}
+
+.mini-select:disabled {
+  opacity: 0.4;
+}
+
+.speed-picker {
+  display: flex;
+  gap: 3px;
+}
+
+.speed-picker .mini-btn.active {
+  border-color: var(--accent);
+  background: #241d47;
+  color: #c9baff;
+}
+
+.autotune-readout {
+  font-size: 10px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent);
+  margin-left: auto;
+  padding-right: 2px;
+}
+
 /* ---------- Video reels ---------- */
 
 .reel-controls {
