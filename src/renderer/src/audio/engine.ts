@@ -68,7 +68,8 @@ function makeReverbImpulse(ctx: AudioContext, seconds = 2.8, decay = 3.5): Audio
 export class DeckEngine {
   readonly node: AudioWorkletNode
   readonly autotune: AudioWorkletNode
-  readonly stretch: StretchNode
+  /** Null when the pitch-shift module failed to load; autotune is then unavailable. */
+  readonly stretch: StretchNode | null
   readonly dryDelay: DelayNode
   readonly wetGain: GainNode
   readonly dryGain: GainNode
@@ -109,7 +110,7 @@ export class DeckEngine {
     ctx: AudioContext,
     destination: AudioNode,
     reverbImpulse: AudioBuffer,
-    stretch: StretchNode,
+    stretch: StretchNode | null,
     stretchLatencySeconds: number
   ) {
     this.ctx = ctx
@@ -168,7 +169,9 @@ export class DeckEngine {
       .connect(this.xfGain)
       .connect(destination)
     this.node.connect(this.autotune, 1, 0)
-    this.autotune.connect(this.stretch).connect(this.wetGain).connect(this.trim)
+    if (this.stretch) {
+      this.autotune.connect(this.stretch).connect(this.wetGain).connect(this.trim)
+    }
     this.autotune.connect(this.dryDelay).connect(this.dryGain).connect(this.trim)
 
     // Reverb: post-filter send mixed back in pre-fader, so the channel
@@ -205,6 +208,7 @@ export class DeckEngine {
     // The analyzer reports a correction for audio which has just entered the
     // stretch node. Scheduling one stretch latency ahead makes that correction
     // land on the same measured audio when it reaches the node's output.
+    if (!this.stretch) return
     void this.stretch.schedule({
       output: this.ctx.currentTime + this.stretchLatencySeconds,
       semitones,
@@ -374,20 +378,29 @@ export class AudioEngine {
       this.ctx.audioWorklet.addModule('worklets/deck-processor.js'),
       this.ctx.audioWorklet.addModule('worklets/autotune-processor.js')
     ])
-    const stretches = await Promise.all([
-      createStretch(this.ctx, {
-        numberOfInputs: 1,
-        numberOfOutputs: 1,
-        outputChannelCount: [2]
-      }),
-      createStretch(this.ctx, {
-        numberOfInputs: 1,
-        numberOfOutputs: 1,
-        outputChannelCount: [2]
-      })
-    ])
+    // Autotune is optional. If its module cannot load, the deck, mixer and
+    // recording must all still work — losing one effect should never cost the
+    // whole audio engine.
+    let stretches: (StretchNode | null)[] = [null, null]
+    try {
+      stretches = await Promise.all([
+        createStretch(this.ctx, {
+          numberOfInputs: 1,
+          numberOfOutputs: 1,
+          outputChannelCount: [2]
+        }),
+        createStretch(this.ctx, {
+          numberOfInputs: 1,
+          numberOfOutputs: 1,
+          outputChannelCount: [2]
+        })
+      ])
+    } catch (err) {
+      console.error('[stemdeck] autotune unavailable — pitch engine failed to load:', err)
+    }
     const stretchLatencies = await Promise.all(
       stretches.map(async (stretch) => {
+        if (!stretch) return 0
         const latency = await stretch.latency()
         await stretch.start()
         // A non-finite latency would reach createDelay() and throw, taking the
@@ -443,6 +456,11 @@ export class AudioEngine {
 
   async decode(data: ArrayBuffer): Promise<AudioBuffer> {
     return this.ctx.decodeAudioData(data)
+  }
+
+  /** False when the pitch-shift module failed to load. */
+  get autotuneAvailable(): boolean {
+    return this.decks.every((deck) => deck.stretch !== null)
   }
 
   /** Master mix (+ mic when unmuted) for the video recorder. */
