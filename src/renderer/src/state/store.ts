@@ -51,6 +51,8 @@ export interface AutotuneState {
   /** Retune time in ms; 0 is the instant, hard-tuned sound. */
   retuneMs: number
   mix: number
+  /** Keep the singer's formants while shifting — off sounds chipmunky. */
+  formant: boolean
 }
 
 export interface DeckState {
@@ -131,7 +133,15 @@ export const emptyDeck = (): DeckState => ({
   cuePoint: 0,
   hotCues: [null, null, null, null],
   loop: { active: false, start: 0, end: 0 },
-  autotune: { enabled: false, key: 0, scale: 'chromatic', strength: 1, retuneMs: 0, mix: 1 },
+  autotune: {
+    enabled: false,
+    key: 0,
+    scale: 'chromatic',
+    strength: 1,
+    retuneMs: 0,
+    mix: 1,
+    formant: true
+  },
   stems: [],
   usingStems: false
 })

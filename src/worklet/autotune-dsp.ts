@@ -1,5 +1,3 @@
-import { AUTOTUNE_LATENCY_SAMPLES } from './autotune-latency'
-
 export interface AutotuneSettings {
   enabled: boolean
   /** Root note, 0 = C .. 11 = B */
@@ -11,6 +9,8 @@ export interface AutotuneSettings {
   retuneMs: number
   /** Dry/wet, 0 = dry only, 1 = corrected only */
   mix: number
+  /** Preserve the vocal formants while pitch-shifting. */
+  formant: boolean
 }
 
 const WINDOW_SIZE = 1024
@@ -21,7 +21,6 @@ const MIN_HZ = 70
 const MAX_HZ = 1100
 const RING_SIZE = 32768
 const RING_MASK = RING_SIZE - 1
-const MARK_CAPACITY = 4096
 const MAJOR_INTERVALS = [0, 2, 4, 5, 7, 9, 11]
 const MINOR_INTERVALS = [0, 2, 3, 5, 7, 8, 10]
 
@@ -29,17 +28,13 @@ const clamp = (value: number, min: number, max: number): number =>
   Math.max(min, Math.min(max, value))
 
 /**
- * Streaming monophonic pitch correction.
+ * Streaming monophonic pitch analysis.
  *
- * YIN supplies pitch-synchronous analysis marks. TD-PSOLA then repeats or
- * skips those grains at synthesis marks whose spacing is the corrected
- * period. Input and output timelines advance together, so duration is
- * preserved. The fixed delay gives the detector enough causal look-ahead to
- * construct complete grains before their output slots are consumed.
+ * YIN detects the input fundamental and the scale logic turns it into a
+ * semitone correction for the downstream Signalsmith Stretch node. This
+ * class is analysis-only: analyze() never writes to either input buffer.
  */
-export class AutotuneEngine {
-  readonly latencySamples: number
-
+export class PitchAnalyzer {
   private readonly sampleRate: number
   private settings: AutotuneSettings = {
     enabled: false,
@@ -47,42 +42,27 @@ export class AutotuneEngine {
     scale: 'chromatic',
     strength: 1,
     retuneMs: 0,
-    mix: 1
+    mix: 1,
+    formant: true
   }
 
   private readonly inputL = new Float32Array(RING_SIZE)
   private readonly inputR = new Float32Array(RING_SIZE)
-  private readonly wetL = new Float32Array(RING_SIZE)
-  private readonly wetR = new Float32Array(RING_SIZE)
-  private readonly wetWeight = new Float32Array(RING_SIZE)
   private readonly yinDifference: Float64Array
   private readonly yinCmnd: Float64Array
 
   private inputWrite = 0
-  private outputRead = 0
   private nextDetectionEnd = WINDOW_SIZE
   private detectedValue = 0
   private targetValue = 0
+  private semitoneValue = 0
   private voiced = false
-  private smoothedRatio = 1
-  private nextAnalysisMark = Number.NaN
-  private nextSynthesisMark = Number.NaN
-
-  private readonly markTimes = new Float64Array(MARK_CAPACITY)
-  private readonly markPeriods = new Float64Array(MARK_CAPACITY)
-  private markHead = 0
-  private markCount = 0
 
   constructor(sampleRate: number) {
     if (!Number.isFinite(sampleRate) || sampleRate <= 0) {
       throw new RangeError('sampleRate must be a positive finite number')
     }
     this.sampleRate = sampleRate
-    // Two windows is deliberately fixed rather than dependent on pitch or
-    // settings, which keeps automation and dry/wet alignment stable.
-    // Single source of truth: the deck processor reads the vocal stem this far
-    // ahead to cancel exactly this delay.
-    this.latencySamples = AUTOTUNE_LATENCY_SAMPLES
     const maxTau = Math.ceil(sampleRate / MIN_HZ)
     this.yinDifference = new Float64Array(maxTau + 2)
     this.yinCmnd = new Float64Array(maxTau + 2)
@@ -102,23 +82,21 @@ export class AutotuneEngine {
       this.settings.retuneMs = Math.max(0, settings.retuneMs)
     }
     if (settings.mix !== undefined) this.settings.mix = clamp(settings.mix, 0, 1)
+    if (settings.formant !== undefined) this.settings.formant = settings.formant
 
     if (wasEnabled !== this.settings.enabled) this.clearState()
   }
 
-  /** Process one block in place. left/right are same-length Float32Arrays. */
-  process(left: Float32Array, right: Float32Array): void {
+  /** Analyze a block without modifying either input buffer. */
+  analyze(left: Float32Array, right: Float32Array): void {
     if (left.length !== right.length) {
       throw new RangeError('left and right blocks must have the same length')
     }
-    // The disabled path deliberately touches nothing: bypass is bit-exact.
     if (!this.settings.enabled || left.length === 0) return
-    // AudioWorklet blocks are small, but keeping the plain DSP API robust for
-    // larger callers also prevents an oversized block from lapping the ring.
     if (left.length > HOP_SIZE) {
       for (let offset = 0; offset < left.length; offset += HOP_SIZE) {
         const end = Math.min(left.length, offset + HOP_SIZE)
-        this.process(left.subarray(offset, end), right.subarray(offset, end))
+        this.analyze(left.subarray(offset, end), right.subarray(offset, end))
       }
       return
     }
@@ -132,34 +110,9 @@ export class AutotuneEngine {
     this.inputWrite += left.length
 
     while (this.nextDetectionEnd <= this.inputWrite) {
-      this.analyse(this.nextDetectionEnd)
+      this.analyseFrame(this.nextDetectionEnd)
       this.nextDetectionEnd += HOP_SIZE
     }
-
-    const mix = this.settings.mix
-    for (let i = 0; i < left.length; i++) {
-      const outputTime = this.outputRead + i
-      const dryTime = outputTime - this.latencySamples
-      let dryL = 0
-      let dryR = 0
-      if (dryTime >= 0 && dryTime < this.inputWrite) {
-        const dryIndex = dryTime & RING_MASK
-        dryL = this.inputL[dryIndex]
-        dryR = this.inputR[dryIndex]
-      }
-
-      const wetIndex = outputTime & RING_MASK
-      const weight = this.wetWeight[wetIndex]
-      const shiftedL = weight > 1e-6 ? this.wetL[wetIndex] / weight : dryL
-      const shiftedR = weight > 1e-6 ? this.wetR[wetIndex] / weight : dryR
-      left[i] = dryL + (shiftedL - dryL) * mix
-      right[i] = dryR + (shiftedR - dryR) * mix
-
-      this.wetL[wetIndex] = 0
-      this.wetR[wetIndex] = 0
-      this.wetWeight[wetIndex] = 0
-    }
-    this.outputRead += left.length
   }
 
   /** Most recently detected input pitch in Hz, or 0 when unvoiced. */
@@ -167,9 +120,14 @@ export class AutotuneEngine {
     return this.detectedValue
   }
 
-  /** Current target pitch in Hz, or 0 when not correcting. */
+  /** Current snapped target pitch in Hz, or 0 when unvoiced. */
   get targetHz(): number {
     return this.targetValue
+  }
+
+  /** Smoothed target-minus-detected correction in semitones. */
+  get semitones(): number {
+    return this.semitoneValue
   }
 
   reset(): void {
@@ -179,83 +137,44 @@ export class AutotuneEngine {
   private clearState(): void {
     this.inputL.fill(0)
     this.inputR.fill(0)
-    this.wetL.fill(0)
-    this.wetR.fill(0)
-    this.wetWeight.fill(0)
     this.inputWrite = 0
-    this.outputRead = 0
     this.nextDetectionEnd = WINDOW_SIZE
     this.detectedValue = 0
     this.targetValue = 0
+    this.semitoneValue = 0
     this.voiced = false
-    this.smoothedRatio = 1
-    this.nextAnalysisMark = Number.NaN
-    this.nextSynthesisMark = Number.NaN
-    this.markHead = 0
-    this.markCount = 0
   }
 
-  private analyse(frameEnd: number): void {
-    const frameCenter = frameEnd - WINDOW_SIZE / 2
+  private analyseFrame(frameEnd: number): void {
     const detected = this.detectYin(frameEnd)
     if (detected === 0) {
-      this.clearWetRange(
-        Math.floor(frameCenter - HOP_SIZE / 2 + this.latencySamples),
-        Math.ceil(frameCenter + HOP_SIZE / 2 + this.latencySamples)
-      )
       this.detectedValue = 0
       this.targetValue = 0
       this.voiced = false
-      this.smoothedRatio = 1
-      this.nextAnalysisMark = Number.NaN
-      this.nextSynthesisMark = Number.NaN
-      this.markHead = 0
-      this.markCount = 0
+      // Keep the last correction through unvoiced gaps. Resetting it here
+      // makes the shifter hunt between words and produces audible warble.
       return
     }
 
-    const period = this.sampleRate / detected
     const target = this.nearestScaleFrequency(detected)
     const detectedMidi = 69 + 12 * Math.log2(detected / 440)
     const targetMidi = 69 + 12 * Math.log2(target / 440)
-    const correctedMidi =
-      detectedMidi + (targetMidi - detectedMidi) * this.settings.strength
-    const desiredRatio = Math.pow(2, (correctedMidi - detectedMidi) / 12)
+    const desiredSemitones =
+      this.settings.strength === 0
+        ? 0
+        : (targetMidi - detectedMidi) * this.settings.strength
     const onset = !this.voiced
 
     this.detectedValue = detected
     this.targetValue = target
     if (onset || this.settings.retuneMs === 0) {
-      this.smoothedRatio = desiredRatio
+      this.semitoneValue = desiredSemitones
     } else {
       const tauSamples = (this.settings.retuneMs / 1000) * this.sampleRate
       const coefficient = 1 - Math.exp(-HOP_SIZE / Math.max(1, tauSamples))
-      this.smoothedRatio += (desiredRatio - this.smoothedRatio) * coefficient
+      this.semitoneValue += (desiredSemitones - this.semitoneValue) * coefficient
     }
-
-    if (onset) {
-      const firstMark = this.findPitchMark(frameCenter, period)
-      this.appendMark(firstMark, period)
-      this.nextAnalysisMark = firstMark + period
-      this.nextSynthesisMark = firstMark
-      this.voiced = true
-    }
-
-    while (this.nextAnalysisMark <= frameCenter) {
-      const mark = this.findPitchMark(this.nextAnalysisMark, period)
-      this.appendMark(mark, period)
-      this.nextAnalysisMark = mark + period
-    }
-    this.scheduleGrains()
-  }
-
-  private clearWetRange(start: number, end: number): void {
-    for (let time = Math.max(start, this.outputRead); time < end; time++) {
-      const index = time & RING_MASK
-      this.wetL[index] = 0
-      this.wetR[index] = 0
-      this.wetWeight[index] = 0
-    }
+    this.voiced = true
   }
 
   private detectYin(frameEnd: number): number {
@@ -340,97 +259,5 @@ export class AutotuneEngine {
       }
     }
     return 440 * Math.pow(2, (nearestMidi - 69) / 12)
-  }
-
-  private findPitchMark(near: number, period: number): number {
-    const radius = Math.max(1, Math.floor(period * 0.25))
-    const center = Math.round(near)
-    let bestTime = center
-    let bestValue = Number.NEGATIVE_INFINITY
-    for (let time = center - radius; time <= center + radius; time++) {
-      if (time < 0 || time >= this.inputWrite) continue
-      const index = time & RING_MASK
-      const mono = (this.inputL[index] + this.inputR[index]) * 0.5
-      if (mono > bestValue) {
-        bestValue = mono
-        bestTime = time
-      }
-    }
-    return bestTime
-  }
-
-  private appendMark(time: number, period: number): void {
-    if (this.markCount === MARK_CAPACITY) {
-      this.markHead = (this.markHead + 1) % MARK_CAPACITY
-      this.markCount--
-    }
-    const tail = (this.markHead + this.markCount) % MARK_CAPACITY
-    this.markTimes[tail] = time
-    this.markPeriods[tail] = period
-    this.markCount++
-  }
-
-  private scheduleGrains(): void {
-    while (this.markCount >= 2 && Number.isFinite(this.nextSynthesisMark)) {
-      while (
-        this.markCount >= 2 &&
-        this.markTimes[(this.markHead + 1) % MARK_CAPACITY] <= this.nextSynthesisMark
-      ) {
-        this.markHead = (this.markHead + 1) % MARK_CAPACITY
-        this.markCount--
-      }
-      if (this.markCount < 2) break
-
-      const first = this.markHead
-      const second = (this.markHead + 1) % MARK_CAPACITY
-      const firstTime = this.markTimes[first]
-      const secondTime = this.markTimes[second]
-      const chosen =
-        Math.abs(this.nextSynthesisMark - firstTime) <=
-        Math.abs(secondTime - this.nextSynthesisMark)
-          ? first
-          : second
-      const sourceCenter = this.markTimes[chosen]
-      const period = this.markPeriods[chosen]
-      if (sourceCenter + Math.ceil(period) >= this.inputWrite) break
-
-      this.addGrain(sourceCenter, this.nextSynthesisMark + this.latencySamples, period)
-      this.nextSynthesisMark += period / this.smoothedRatio
-    }
-  }
-
-  private addGrain(sourceCenter: number, outputCenter: number, period: number): void {
-    const halfLength = Math.max(2, Math.round(period))
-    for (let offset = -halfLength; offset <= halfLength; offset++) {
-      const normalized = offset / halfLength
-      const window = 0.5 + 0.5 * Math.cos(Math.PI * normalized)
-      if (window <= 0) continue
-
-      const sourceTime = sourceCenter + offset
-      const sourceFloor = Math.floor(sourceTime)
-      const sourceFraction = sourceTime - sourceFloor
-      const sourceIndex0 = sourceFloor & RING_MASK
-      const sourceIndex1 = (sourceFloor + 1) & RING_MASK
-      const sampleL =
-        this.inputL[sourceIndex0] +
-        (this.inputL[sourceIndex1] - this.inputL[sourceIndex0]) * sourceFraction
-      const sampleR =
-        this.inputR[sourceIndex0] +
-        (this.inputR[sourceIndex1] - this.inputR[sourceIndex0]) * sourceFraction
-
-      const destinationTime = outputCenter + offset
-      const destinationFloor = Math.floor(destinationTime)
-      const destinationFraction = destinationTime - destinationFloor
-      this.accumulate(destinationFloor, sampleL, sampleR, window * (1 - destinationFraction))
-      this.accumulate(destinationFloor + 1, sampleL, sampleR, window * destinationFraction)
-    }
-  }
-
-  private accumulate(time: number, left: number, right: number, weight: number): void {
-    if (time < this.outputRead || weight <= 0) return
-    const index = time & RING_MASK
-    this.wetL[index] += left * weight
-    this.wetR[index] += right * weight
-    this.wetWeight[index] += weight
   }
 }

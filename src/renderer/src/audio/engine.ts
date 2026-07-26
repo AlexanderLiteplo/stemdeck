@@ -5,8 +5,13 @@
  *                                                                                 +-> master -> limiter -> speakers
  * DeckWorklet -> ... -> xfGain -----------------------------------------------------^        \-> analyser
  *                                                                                             \-> recorder tap
+ * Deck output 1 -> pitch analyzer -> stretch -> wet gain -+
+ *                              \-> dry delay -> dry gain ---+-> trim
  */
 
+// signalsmith-stretch 1.3.2 does not publish TypeScript declarations.
+// @ts-expect-error No declaration file is included in the package.
+import SignalsmithStretch from 'signalsmith-stretch'
 import type { AutotuneSettings } from '../../../worklet/autotune-dsp'
 
 export type { AutotuneSettings } from '../../../worklet/autotune-dsp'
@@ -22,7 +27,30 @@ export type DeckMessage =
   | { type: 'position'; frames: number; playing: boolean }
   | { type: 'ended' }
 
-type AutotuneMessage = { type: 'pitch'; detected: number; target: number }
+type AutotuneMessage = {
+  type: 'pitch'
+  detected: number
+  target: number
+  semitones: number
+}
+
+interface StretchSchedule {
+  output: number
+  semitones: number
+  formantCompensation: boolean
+  formantBaseHz: number
+}
+
+type StretchNode = AudioNode & {
+  latency(): Promise<number>
+  schedule(settings: StretchSchedule): Promise<unknown>
+  start(when?: number): Promise<unknown>
+}
+
+const createStretch = SignalsmithStretch as (
+  context: AudioContext,
+  options: AudioWorkletNodeOptions
+) => Promise<StretchNode>
 
 /** Synthetic hall impulse response: exponentially decaying stereo noise. */
 function makeReverbImpulse(ctx: AudioContext, seconds = 2.8, decay = 3.5): AudioBuffer {
@@ -40,6 +68,10 @@ function makeReverbImpulse(ctx: AudioContext, seconds = 2.8, decay = 3.5): Audio
 export class DeckEngine {
   readonly node: AudioWorkletNode
   readonly autotune: AudioWorkletNode
+  readonly stretch: StretchNode
+  readonly dryDelay: DelayNode
+  readonly wetGain: GainNode
+  readonly dryGain: GainNode
   readonly trim: GainNode
   readonly eqLow: BiquadFilterNode
   readonly eqMid: BiquadFilterNode
@@ -56,23 +88,53 @@ export class DeckEngine {
   private tempoValue = 1
   private playingFlag = false
   private lastPositionAt = 0
+  private readonly stretchLatencySeconds: number
+  private readonly vocalLeadSamples: number
+  private autotuneSettings: AutotuneSettings = {
+    enabled: false,
+    key: 0,
+    scale: 'chromatic',
+    strength: 1,
+    retuneMs: 0,
+    mix: 1,
+    formant: true
+  }
+  private lastCorrectionSemitones = 0
   duration = 0
   onEnded: (() => void) | null = null
   onPosition: ((seconds: number) => void) | null = null
   onPitch: ((detected: number, target: number) => void) | null = null
 
-  constructor(ctx: AudioContext, destination: AudioNode, reverbImpulse: AudioBuffer) {
+  constructor(
+    ctx: AudioContext,
+    destination: AudioNode,
+    reverbImpulse: AudioBuffer,
+    stretch: StretchNode,
+    stretchLatencySeconds: number
+  ) {
     this.ctx = ctx
+    this.stretch = stretch
+    this.stretchLatencySeconds = stretchLatencySeconds
+    // The analyzer is a bit-exact pass-through, so it contributes zero signal
+    // latency. The stretch node's measured live-input latency is the complete
+    // vocal-route delay that the deck must read ahead by.
+    this.vocalLeadSamples = Math.round(stretchLatencySeconds * ctx.sampleRate)
     this.node = new AudioWorkletNode(ctx, 'deck-processor', {
       numberOfInputs: 0,
       numberOfOutputs: 2,
       outputChannelCount: [2, 2]
     })
-    this.autotune = new AudioWorkletNode(ctx, 'autotune-processor', {
+    this.autotune = new AudioWorkletNode(ctx, 'pitch-analyzer', {
       numberOfInputs: 1,
       numberOfOutputs: 1,
       outputChannelCount: [2]
     })
+    this.dryDelay = ctx.createDelay(Math.max(1, stretchLatencySeconds + 0.1))
+    this.dryDelay.delayTime.value = stretchLatencySeconds
+    this.wetGain = ctx.createGain()
+    this.wetGain.gain.value = this.autotuneSettings.mix
+    this.dryGain = ctx.createGain()
+    this.dryGain.gain.value = 1 - this.autotuneSettings.mix
     this.trim = ctx.createGain()
     this.eqLow = ctx.createBiquadFilter()
     this.eqLow.type = 'lowshelf'
@@ -106,7 +168,8 @@ export class DeckEngine {
       .connect(this.xfGain)
       .connect(destination)
     this.node.connect(this.autotune, 1, 0)
-    this.autotune.connect(this.trim)
+    this.autotune.connect(this.stretch).connect(this.wetGain).connect(this.trim)
+    this.autotune.connect(this.dryDelay).connect(this.dryGain).connect(this.trim)
 
     // Reverb: post-filter send mixed back in pre-fader, so the channel
     // fader and crossfader still control the wet tail.
@@ -130,8 +193,24 @@ export class DeckEngine {
     }
     this.autotune.port.onmessage = (e: MessageEvent<AutotuneMessage>) => {
       const msg = e.data
-      if (msg.type === 'pitch') this.onPitch?.(msg.detected, msg.target)
+      if (msg.type === 'pitch') {
+        this.lastCorrectionSemitones = msg.semitones
+        this.scheduleCorrection(msg.semitones)
+        this.onPitch?.(msg.detected, msg.target)
+      }
     }
+  }
+
+  private scheduleCorrection(semitones: number): void {
+    // The analyzer reports a correction for audio which has just entered the
+    // stretch node. Scheduling one stretch latency ahead makes that correction
+    // land on the same measured audio when it reaches the node's output.
+    void this.stretch.schedule({
+      output: this.ctx.currentTime + this.stretchLatencySeconds,
+      semitones,
+      formantCompensation: this.autotuneSettings.formant,
+      formantBaseHz: 0
+    })
   }
 
   load(stems: LoadedStem[]): void {
@@ -189,9 +268,29 @@ export class DeckEngine {
   }
 
   setAutotune(settings: Partial<AutotuneSettings>): void {
+    const previousFormant = this.autotuneSettings.formant
+    this.autotuneSettings = { ...this.autotuneSettings, ...settings }
     this.autotune.port.postMessage({ type: 'settings', settings })
+    if (settings.mix !== undefined) {
+      const mix = Math.max(0, Math.min(1, settings.mix))
+      this.autotuneSettings.mix = mix
+      const now = this.ctx.currentTime
+      this.wetGain.gain.setTargetAtTime(mix, now, 0.01)
+      this.dryGain.gain.setTargetAtTime(1 - mix, now, 0.01)
+    }
     if (settings.enabled !== undefined) {
-      this.node.port.postMessage({ type: 'vocalRoute', enabled: settings.enabled })
+      this.node.port.postMessage({
+        type: 'vocalRoute',
+        enabled: settings.enabled,
+        leadSamples: this.vocalLeadSamples
+      })
+    }
+    if (
+      settings.formant !== undefined &&
+      settings.formant !== previousFormant &&
+      this.autotuneSettings.enabled
+    ) {
+      this.scheduleCorrection(this.lastCorrectionSemitones)
     }
   }
 
@@ -275,6 +374,28 @@ export class AudioEngine {
       this.ctx.audioWorklet.addModule('worklets/deck-processor.js'),
       this.ctx.audioWorklet.addModule('worklets/autotune-processor.js')
     ])
+    const stretches = await Promise.all([
+      createStretch(this.ctx, {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [2]
+      }),
+      createStretch(this.ctx, {
+        numberOfInputs: 1,
+        numberOfOutputs: 1,
+        outputChannelCount: [2]
+      })
+    ])
+    const stretchLatencies = await Promise.all(
+      stretches.map(async (stretch) => {
+        const latency = await stretch.latency()
+        await stretch.start()
+        // A non-finite latency would reach createDelay() and throw, taking the
+        // whole audio engine down at startup. Fall back to the library's
+        // default block length instead.
+        return Number.isFinite(latency) && latency > 0 ? latency : 0.12
+      })
+    )
 
     this.master = this.ctx.createGain()
     this.limiter = this.ctx.createDynamicsCompressor()
@@ -302,8 +423,8 @@ export class AudioEngine {
 
     const impulse = makeReverbImpulse(this.ctx)
     this.decks = [
-      new DeckEngine(this.ctx, this.master, impulse),
-      new DeckEngine(this.ctx, this.master, impulse)
+      new DeckEngine(this.ctx, this.master, impulse, stretches[0], stretchLatencies[0]),
+      new DeckEngine(this.ctx, this.master, impulse, stretches[1], stretchLatencies[1])
     ]
     this.setCrossfader(0.5)
     this.ready = true
