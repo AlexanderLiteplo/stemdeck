@@ -34,6 +34,10 @@ const ANALYSIS_VERSION = 2
 
 export async function initApp(): Promise<void> {
   await engine.init()
+  // A failure here blanks the whole app, so leave a breadcrumb in the log.
+  console.info(
+    `[stemdeck] audio engine ready — autotune ${engine.autotuneAvailable ? 'available' : 'UNAVAILABLE'}`
+  )
   engine.decks.forEach((deck, i) => {
     deck.onEnded = () => updateDeck(i, { playing: false })
     deck.onPitch = (detected, target) => {
@@ -677,6 +681,10 @@ export const deckPitch: { detected: number; target: number }[] = [
 
 export function setAutotune(deckIndex: number, patch: Partial<AutotuneState>): void {
   const current = useStore.getState().decks[deckIndex].autotune
+  if (patch.enabled && !engine.autotuneAvailable) {
+    showToast('Autotune unavailable — the pitch engine failed to load')
+    return
+  }
   engine.decks[deckIndex].setAutotune(patch)
   updateDeck(deckIndex, { autotune: { ...current, ...patch } })
 }
