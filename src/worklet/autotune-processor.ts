@@ -1,49 +1,63 @@
-import { AutotuneEngine, type AutotuneSettings } from './autotune-dsp'
+import { PitchAnalyzer, type AutotuneSettings } from './autotune-dsp'
 
 type AutotuneMessage = {
   type: 'settings'
   settings: Partial<AutotuneSettings>
 }
 
-const PITCH_POST_INTERVAL = 8
+const PITCH_POST_INTERVAL_SAMPLES = 256
+const PITCH_POST_THRESHOLD_SEMITONES = 0.02
 
-class AutotuneProcessor extends AudioWorkletProcessor {
-  private readonly engine = new AutotuneEngine(sampleRate)
-  private blockCounter = 0
+class PitchAnalyzerProcessor extends AudioWorkletProcessor {
+  private readonly analyzer = new PitchAnalyzer(sampleRate)
+  private samplesSincePost = 0
+  private lastPostedSemitones = 0
+  private lastPostedVoiced = false
 
   constructor() {
     super()
     this.port.onmessage = (event: MessageEvent<AutotuneMessage>) => {
-      if (event.data.type === 'settings') this.engine.set(event.data.settings)
+      if (event.data.type === 'settings') this.analyzer.set(event.data.settings)
     }
   }
 
   process(inputs: Float32Array[][], outputs: Float32Array[][]): boolean {
     const input = inputs[0]
     const output = outputs[0]
-    const left = output[0]
-    const right = output.length > 1 ? output[1] : output[0]
-
     if (!input || input.length === 0) {
-      left.fill(0)
-      right.fill(0)
+      for (const channel of output) channel.fill(0)
     } else {
-      left.set(input[0])
-      right.set(input.length > 1 ? input[1] : input[0])
-      this.engine.process(left, right)
+      for (let channel = 0; channel < output.length; channel++) {
+        output[channel].set(input[Math.min(channel, input.length - 1)])
+      }
+      const left = input[0]
+      const right = input.length > 1 ? input[1] : input[0]
+      this.analyzer.analyze(left, right)
     }
 
-    this.blockCounter++
-    if (this.blockCounter >= PITCH_POST_INTERVAL) {
-      this.blockCounter = 0
+    const blockLength = output[0]?.length ?? 0
+    this.samplesSincePost += blockLength
+    const semitones = this.analyzer.semitones
+    const voiced = this.analyzer.detectedHz > 0
+    const correctionMoved =
+      Math.abs(semitones - this.lastPostedSemitones) > PITCH_POST_THRESHOLD_SEMITONES
+    const voicedChanged = voiced !== this.lastPostedVoiced
+    if (
+      this.samplesSincePost >= PITCH_POST_INTERVAL_SAMPLES &&
+      (correctionMoved || voicedChanged)
+    ) {
+      this.samplesSincePost = 0
+      this.lastPostedSemitones = semitones
+      this.lastPostedVoiced = voiced
       this.port.postMessage({
         type: 'pitch',
-        detected: this.engine.detectedHz,
-        target: this.engine.targetHz
+        detected: this.analyzer.detectedHz,
+        target: this.analyzer.targetHz,
+        semitones
       })
     }
     return true
   }
 }
 
-registerProcessor('autotune-processor', AutotuneProcessor)
+registerProcessor('pitch-analyzer', PitchAnalyzerProcessor)

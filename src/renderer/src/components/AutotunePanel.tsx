@@ -95,6 +95,15 @@ export function AutotunePanel({ deckIndex }: { deckIndex: number }) {
         ))}
       </span>
 
+      <button
+        className={`mini-btn ${autotune.formant ? 'active' : ''}`}
+        disabled={!usingStems}
+        onClick={() => setAutotune(deckIndex, { formant: !autotune.formant })}
+        title="Formant correction — keeps the singer's character instead of going chipmunky. Turn off for a more synthetic sound."
+      >
+        FRMNT
+      </button>
+
       <Knob
         label="AMT"
         size={30}

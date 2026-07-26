@@ -41,6 +41,7 @@
     "essentia.js": "^0.1.3",
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
+    "signalsmith-stretch": "1.3.2",
     "soundtouchjs": "^0.3.0",
     "zustand": "^5.0.14"
   },

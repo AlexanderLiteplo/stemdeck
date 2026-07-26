@@ -12,7 +12,6 @@
  * identically in both playback paths.
  */
 import { SimpleFilter, SoundTouch, type SoundTouchSource } from 'soundtouchjs'
-import { AUTOTUNE_LATENCY_SAMPLES } from './autotune-latency'
 
 interface Stem {
   l: Float32Array
@@ -34,7 +33,7 @@ type InMessage =
   | { type: 'tempo'; value: number }
   | { type: 'pitch'; semitones: number }
   | { type: 'keylock'; enabled: boolean }
-  | { type: 'vocalRoute'; enabled: boolean }
+  | { type: 'vocalRoute'; enabled: boolean; leadSamples: number }
   | { type: 'stemGain'; index: number; value: number }
   | { type: 'loop'; enabled: boolean; start: number; end: number }
 
@@ -55,6 +54,7 @@ class DeckProcessor extends AudioWorkletProcessor {
   private pitchSemitones = 0
   private keylock = false
   private vocalRoute = false
+  private vocalLeadSamples = 0
   private stemGains = [1, 1, 1, 1]
   private smoothedGains = [1, 1, 1, 1]
   private loopEnabled = false
@@ -124,6 +124,12 @@ class DeckProcessor extends AudioWorkletProcessor {
         this.postPosition(true)
         break
       case 'tempo':
+        if (this.vocalRoute && this.keylock) {
+          // SoundTouch source positions are in source samples. Keep the vocal
+          // head's latency lead correct when tempo changes without rebuilding
+          // either already-buffered pipeline.
+          this.positionVocal += this.vocalLeadSamples * (msg.value - this.tempo)
+        }
         this.tempo = msg.value
         this.updateStretchParams()
         break
@@ -139,8 +145,15 @@ class DeckProcessor extends AudioWorkletProcessor {
         this.resetStretch()
         break
       case 'vocalRoute':
-        if (this.vocalRoute !== msg.enabled) {
+        {
+          const routeChanged = this.vocalRoute !== msg.enabled
+          const nextLeadSamples = Number.isFinite(msg.leadSamples)
+            ? Math.max(0, msg.leadSamples)
+            : 0
+          const leadChanged = this.vocalLeadSamples !== nextLeadSamples
           this.vocalRoute = msg.enabled
+          this.vocalLeadSamples = nextLeadSamples
+          if (!routeChanged && !leadChanged) break
           // SoundTouch may already have queued audio from the old routing.
           // Rebuild from the audible point so both new pipelines start aligned.
           if (this.keylock) {
@@ -175,7 +188,7 @@ class DeckProcessor extends AudioWorkletProcessor {
    * rest of the mix. The lead is in source samples, so it scales with tempo.
    */
   private syncVocalPosition(): void {
-    const lead = this.vocalRoute ? AUTOTUNE_LATENCY_SAMPLES * this.tempo : 0
+    const lead = this.vocalRoute ? this.vocalLeadSamples * this.tempo : 0
     this.positionVocal = this.position + lead
   }
 
@@ -366,7 +379,7 @@ class DeckProcessor extends AudioWorkletProcessor {
           if (routeVocals && s === 0) {
             // Read the vocal ahead by the autotune latency so the corrected
             // vocal comes back out in time with the rest of the mix.
-            let vp = this.position + AUTOTUNE_LATENCY_SAMPLES * rate
+            let vp = this.position + this.vocalLeadSamples * rate
             if (this.loopEnabled && this.loopEnd > this.loopStart) {
               while (vp >= this.loopEnd) vp -= this.loopEnd - this.loopStart
             }
