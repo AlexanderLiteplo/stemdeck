@@ -10,6 +10,17 @@ const SPEEDS = [
   { label: 'TIGHT', ms: 25, title: 'Fast but audible glide' },
   { label: 'SOFT', ms: 90, title: 'Gentle correction that keeps the natural performance' }
 ]
+/**
+ * Fewer notes force bigger, more obviously audible jumps. Chromatic barely
+ * moves an already-tuned vocal, so it is offered last rather than as a default.
+ */
+const SCALES = [
+  { value: 'minorPentatonic', label: 'MIN PENT', title: '5 notes — biggest jumps, the classic hip-hop sound' },
+  { value: 'majorPentatonic', label: 'MAJ PENT', title: '5 notes, brighter' },
+  { value: 'minor', label: 'MINOR', title: '7 notes' },
+  { value: 'major', label: 'MAJOR', title: '7 notes' },
+  { value: 'chromatic', label: 'CHROM', title: 'All 12 notes — subtlest, barely audible on a tuned vocal' }
+] as const
 
 function noteName(hz: number): string {
   if (hz <= 0) return '—'
@@ -17,7 +28,10 @@ function noteName(hz: number): string {
   return `${NOTES[((midi % 12) + 12) % 12]}${Math.floor(midi / 12) - 1}`
 }
 
-/** Polled outside React state — pitch updates far faster than a sane render rate. */
+/**
+ * Live readout of how far the pitch is actually being moved. Polled outside
+ * React state, which updates far faster than a sane render rate.
+ */
 function PitchReadout({ deckIndex }: { deckIndex: number }) {
   const [, force] = useState(0)
   useEffect(() => {
@@ -25,11 +39,25 @@ function PitchReadout({ deckIndex }: { deckIndex: number }) {
     return () => clearInterval(id)
   }, [])
   const { detected, target } = deckPitch[deckIndex]
+  const cents = detected > 0 && target > 0 ? 1200 * Math.log2(target / detected) : 0
+  // Full bar at a semitone in either direction.
+  const width = Math.min(100, (Math.abs(cents) / 100) * 100)
   return (
-    <span className="autotune-readout" title="Detected pitch → corrected pitch">
-      {noteName(detected)}
-      <span className="dim"> ▸ </span>
-      {noteName(target)}
+    <span className="autotune-readout" title="Detected pitch → corrected pitch, and how far it moved">
+      <span className="autotune-notes">
+        {noteName(detected)}
+        <span className="dim"> ▸ </span>
+        {noteName(target)}
+      </span>
+      <span className="cents-meter">
+        <span
+          className={`cents-fill ${cents < 0 ? 'down' : 'up'}`}
+          style={{ width: `${width}%` }}
+        />
+      </span>
+      <span className="cents-value">
+        {detected > 0 ? `${cents >= 0 ? '+' : ''}${cents.toFixed(0)}¢` : '—'}
+      </span>
     </span>
   )
 }
@@ -37,6 +65,12 @@ function PitchReadout({ deckIndex }: { deckIndex: number }) {
 export function AutotunePanel({ deckIndex }: { deckIndex: number }) {
   const autotune = useStore((s) => s.decks[deckIndex].autotune)
   const usingStems = useStore((s) => s.decks[deckIndex].usingStems)
+  const trackId = useStore((s) => s.decks[deckIndex].trackId)
+  const track = useStore((s) => s.library.find((t) => t.id === trackId))
+  const detectedKey =
+    track?.musicalKey != null && track.musicalScale
+      ? `${NOTES[track.musicalKey]} ${track.musicalScale === 'minor' ? 'min' : 'maj'}`
+      : null
 
   return (
     <div className={`autotune-row ${autotune.enabled ? 'on' : ''}`}>
@@ -58,7 +92,11 @@ export function AutotunePanel({ deckIndex }: { deckIndex: number }) {
         value={autotune.key}
         disabled={!usingStems}
         onChange={(e) => setAutotune(deckIndex, { key: Number(e.target.value) })}
-        title="Key to snap to"
+        title={
+          detectedKey
+            ? `Key to snap to — detected ${detectedKey} for this track`
+            : 'Key to snap to'
+        }
       >
         {NOTES.map((note, i) => (
           <option key={note} value={i}>
@@ -74,12 +112,20 @@ export function AutotunePanel({ deckIndex }: { deckIndex: number }) {
         onChange={(e) =>
           setAutotune(deckIndex, { scale: e.target.value as typeof autotune.scale })
         }
-        title="Scale — chromatic snaps to any semitone"
+        title="Scale — fewer notes means bigger, more obvious pitch jumps"
       >
-        <option value="chromatic">CHROM</option>
-        <option value="major">MAJOR</option>
-        <option value="minor">MINOR</option>
+        {SCALES.map((scale) => (
+          <option key={scale.value} value={scale.value} title={scale.title}>
+            {scale.label}
+          </option>
+        ))}
       </select>
+
+      {detectedKey && (
+        <span className="detected-key" title="Key detected for this track">
+          ♪{detectedKey}
+        </span>
+      )}
 
       <span className="speed-picker">
         {SPEEDS.map((speed) => (
