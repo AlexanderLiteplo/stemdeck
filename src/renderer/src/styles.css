@@ -331,12 +331,59 @@ button:disabled {
 }
 
 .autotune-readout {
+  display: flex;
+  align-items: center;
+  gap: 5px;
   font-size: 10px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   color: var(--accent);
   margin-left: auto;
   padding-right: 2px;
+}
+
+.autotune-notes {
+  min-width: 58px;
+}
+
+/* Shows how far the pitch is actually being moved — the effect is easy to
+   miss by ear on an already-tuned vocal, so make it visible. */
+.cents-meter {
+  width: 46px;
+  height: 5px;
+  border-radius: 3px;
+  background: #232838;
+  overflow: hidden;
+}
+
+.cents-fill {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.1s linear;
+}
+
+.cents-fill.up {
+  background: var(--green);
+}
+
+.cents-fill.down {
+  background: var(--yellow);
+}
+
+.cents-value {
+  min-width: 30px;
+  text-align: right;
+}
+
+.detected-key {
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--green);
+  padding: 2px 4px;
+  border: 1px solid #1d4a30;
+  border-radius: 4px;
+  background: #10301d;
 }
 
 /* ---------- Video reels ---------- */

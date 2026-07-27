@@ -1,8 +1,15 @@
+export type AutotuneScale =
+  | 'chromatic'
+  | 'major'
+  | 'minor'
+  | 'majorPentatonic'
+  | 'minorPentatonic'
+
 export interface AutotuneSettings {
   enabled: boolean
   /** Root note, 0 = C .. 11 = B */
   key: number
-  scale: 'major' | 'minor' | 'chromatic'
+  scale: AutotuneScale
   /** 0 = no correction, 1 = fully snapped to the target note */
   strength: number
   /** Retune time in ms. 0 = instant hard-tune (the T-Pain sound). */
@@ -23,6 +30,8 @@ const RING_SIZE = 32768
 const RING_MASK = RING_SIZE - 1
 const MAJOR_INTERVALS = [0, 2, 4, 5, 7, 9, 11]
 const MINOR_INTERVALS = [0, 2, 3, 5, 7, 8, 10]
+const MAJOR_PENTATONIC_INTERVALS = [0, 2, 4, 7, 9]
+const MINOR_PENTATONIC_INTERVALS = [0, 3, 5, 7, 10]
 
 const clamp = (value: number, min: number, max: number): number =>
   Math.max(min, Math.min(max, value))
@@ -39,7 +48,7 @@ export class PitchAnalyzer {
   private settings: AutotuneSettings = {
     enabled: false,
     key: 0,
-    scale: 'chromatic',
+    scale: 'minorPentatonic',
     strength: 1,
     retuneMs: 0,
     mix: 1,
@@ -239,12 +248,24 @@ export class PitchAnalyzer {
 
   private nearestScaleFrequency(hz: number): number {
     const midi = 69 + 12 * Math.log2(hz / 440)
-    const allowed =
-      this.settings.scale === 'chromatic'
-        ? null
-        : this.settings.scale === 'major'
-          ? MAJOR_INTERVALS
-          : MINOR_INTERVALS
+    let allowed: readonly number[] | null
+    switch (this.settings.scale) {
+      case 'chromatic':
+        allowed = null
+        break
+      case 'major':
+        allowed = MAJOR_INTERVALS
+        break
+      case 'minor':
+        allowed = MINOR_INTERVALS
+        break
+      case 'majorPentatonic':
+        allowed = MAJOR_PENTATONIC_INTERVALS
+        break
+      case 'minorPentatonic':
+        allowed = MINOR_PENTATONIC_INTERVALS
+        break
+    }
     let nearestMidi = Math.round(midi)
     let nearestDistance = Number.POSITIVE_INFINITY
     const low = Math.floor(midi) - 12

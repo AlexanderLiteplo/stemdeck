@@ -49,6 +49,9 @@ export interface PersistedTrack {
   bpm: number
   firstBeat: number
   bpmConfidence?: number
+  musicalKey?: number | null
+  musicalScale?: 'major' | 'minor' | null
+  keyStrength?: number
   /** Analysis pipeline version; older tracks are re-analyzed on startup. */
   v?: number
   /** Base64-encoded Float32Array of waveform min/max pairs. */

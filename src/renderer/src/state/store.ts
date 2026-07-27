@@ -18,6 +18,11 @@ export interface TrackInfo {
   firstBeat: number
   /** Beat-tracker confidence [0, 5.32]; 0 = fallback detector. */
   bpmConfidence: number
+  /** Root note, 0 = C .. 11 = B; null when key analysis is unavailable. */
+  musicalKey: number | null
+  musicalScale: 'major' | 'minor' | null
+  /** Essentia key-profile strength; 0 when key analysis is unavailable. */
+  keyStrength: number
   /** Version of the analysis pipeline that produced bpm/firstBeat. */
   analysisV: number
   analyzing: boolean
@@ -45,7 +50,7 @@ export interface AutotuneState {
   enabled: boolean
   /** Root note, 0 = C .. 11 = B. */
   key: number
-  scale: 'major' | 'minor' | 'chromatic'
+  scale: 'chromatic' | 'major' | 'minor' | 'majorPentatonic' | 'minorPentatonic'
   /** 0 = untouched, 1 = fully snapped to the target note. */
   strength: number
   /** Retune time in ms; 0 is the instant, hard-tuned sound. */
@@ -136,7 +141,7 @@ export const emptyDeck = (): DeckState => ({
   autotune: {
     enabled: false,
     key: 0,
-    scale: 'chromatic',
+    scale: 'minorPentatonic',
     strength: 1,
     retuneMs: 0,
     mix: 1,

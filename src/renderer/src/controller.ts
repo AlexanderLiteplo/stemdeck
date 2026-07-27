@@ -132,6 +132,9 @@ export async function saveLibrary(): Promise<void> {
         bpm: t.bpm,
         firstBeat: t.firstBeat,
         bpmConfidence: t.bpmConfidence,
+        musicalKey: t.musicalKey,
+        musicalScale: t.musicalScale,
+        keyStrength: t.keyStrength,
         v: t.analysisV,
         peaks: peaks ? encodePeaks(peaks) : null,
         stems: t.stems,
@@ -168,6 +171,18 @@ async function restoreLibrary(): Promise<void> {
     }
     // Drop a track's crate reference if that crate no longer exists.
     const folderId = saved.folderId && validFolderIds.has(saved.folderId) ? saved.folderId : null
+    const musicalKey =
+      Number.isInteger(saved.musicalKey) &&
+      saved.musicalKey !== null &&
+      saved.musicalKey !== undefined &&
+      saved.musicalKey >= 0 &&
+      saved.musicalKey <= 11
+        ? saved.musicalKey
+        : null
+    const musicalScale =
+      saved.musicalScale === 'major' || saved.musicalScale === 'minor'
+        ? saved.musicalScale
+        : null
     tracks.push({
       id,
       path: saved.path,
@@ -176,6 +191,15 @@ async function restoreLibrary(): Promise<void> {
       bpm: saved.bpm,
       firstBeat: saved.firstBeat,
       bpmConfidence: saved.bpmConfidence ?? 0,
+      musicalKey: musicalScale === null ? null : musicalKey,
+      musicalScale: musicalKey === null ? null : musicalScale,
+      keyStrength:
+        musicalKey !== null &&
+        musicalScale !== null &&
+        typeof saved.keyStrength === 'number' &&
+        Number.isFinite(saved.keyStrength)
+          ? Math.max(0, saved.keyStrength)
+          : 0,
       analysisV: saved.v ?? 0,
       analyzing: false,
       stems: saved.stems,
@@ -239,6 +263,9 @@ async function addTrackPaths(paths: string[]): Promise<void> {
       bpm: 0,
       firstBeat: 0,
       bpmConfidence: 0,
+      musicalKey: null,
+      musicalScale: null,
+      keyStrength: 0,
       analysisV: 0,
       analyzing: true,
       stems: null,
@@ -259,11 +286,14 @@ async function analyzeTrack(track: TrackInfo, model: string): Promise<void> {
     const cached = await window.stemdeck.getCachedStems(track.path, model)
     updateTrack(track.id, { duration: buffer.duration, stems: cached })
     if (!cached && useStore.getState().autoStems) queueSeparation(track.id)
-    const { bpm, firstBeat, confidence } = await analyzeBpm(buffer)
+    const { bpm, firstBeat, confidence, key, scale, keyStrength } = await analyzeBpm(buffer)
     updateTrack(track.id, {
       bpm,
       firstBeat,
       bpmConfidence: confidence,
+      musicalKey: key,
+      musicalScale: scale,
+      keyStrength: keyStrength ?? 0,
       analysisV: ANALYSIS_VERSION,
       analyzing: false
     })
@@ -369,6 +399,13 @@ export async function addRecordingToLibrary(filePath: string): Promise<void> {
 
 // ---------- Deck loading ----------
 
+/**
+ * A key/scale change during an asynchronous deck load wins over the detected
+ * track key. The flag is controller-only because it describes user intent,
+ * not persistent deck state.
+ */
+const autotuneKeyWasSetManually = [false, false]
+
 /** Load a track to a deck; stems are used automatically whenever they exist. */
 export async function loadTrackToDeck(deckIndex: number, trackId: string): Promise<void> {
   const track = useStore.getState().library.find((t) => t.id === trackId)
@@ -376,8 +413,11 @@ export async function loadTrackToDeck(deckIndex: number, trackId: string): Promi
   const withStems = track.stems !== null
   const deck = engine.decks[deckIndex]
   const { pitchRange, reverb } = useStore.getState().decks[deckIndex]
+  autotuneKeyWasSetManually[deckIndex] = false
+  const resetDeck = emptyDeck()
+  deck.setAutotune(resetDeck.autotune)
   updateDeck(deckIndex, {
-    ...emptyDeck(),
+    ...resetDeck,
     pitchRange,
     reverb,
     loading: true,
@@ -414,6 +454,25 @@ export async function loadTrackToDeck(deckIndex: number, trackId: string): Promi
       usingStems: withStems && stems.length > 1,
       stems: stems.map((s) => ({ name: s.name, active: true, volume: 1 }))
     })
+    if (
+      !autotuneKeyWasSetManually[deckIndex] &&
+      track.musicalKey !== null &&
+      track.musicalScale !== null
+    ) {
+      // Snap to the pentatonic form of the detected mode. Its notes are a
+      // subset of the parent scale, so nothing lands out of key, but dropping
+      // two notes forces the larger jumps that make the effect audible — the
+      // full 7-note scale barely moves an already-tuned vocal.
+      const detectedKey = {
+        key: track.musicalKey,
+        scale: (track.musicalScale === 'minor'
+          ? 'minorPentatonic'
+          : 'majorPentatonic') as AutotuneState['scale']
+      }
+      deck.setAutotune(detectedKey)
+      const current = useStore.getState().decks[deckIndex].autotune
+      updateDeck(deckIndex, { autotune: { ...current, ...detectedKey } })
+    }
   } catch (err) {
     deckHiPeaks[deckIndex] = null
     deckPeaks[deckIndex] = null
@@ -684,6 +743,9 @@ export function setAutotune(deckIndex: number, patch: Partial<AutotuneState>): v
   if (patch.enabled && !engine.autotuneAvailable) {
     showToast('Autotune unavailable — the pitch engine failed to load')
     return
+  }
+  if (patch.key !== undefined || patch.scale !== undefined) {
+    autotuneKeyWasSetManually[deckIndex] = true
   }
   engine.decks[deckIndex].setAutotune(patch)
   updateDeck(deckIndex, { autotune: { ...current, ...patch } })

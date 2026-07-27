@@ -23,6 +23,38 @@ const ESSENTIA_SR = 44100 // RhythmExtractor2013 requires 44.1kHz input
 const ANALYZE_SECONDS = 45
 const MIN_CONFIDENCE = 1.5 // multifeature confidence range is [0, 5.32]
 
+type MusicalScale = 'major' | 'minor'
+
+interface KeyAnalysis {
+  key: number
+  scale: MusicalScale
+  keyStrength: number
+}
+
+const KEY_NAMES: Readonly<Record<string, number>> = {
+  'B#': 0,
+  C: 0,
+  'C#': 1,
+  DB: 1,
+  D: 2,
+  'D#': 3,
+  EB: 3,
+  E: 4,
+  FB: 4,
+  'E#': 5,
+  F: 5,
+  'F#': 6,
+  GB: 6,
+  G: 7,
+  'G#': 8,
+  AB: 8,
+  A: 9,
+  'A#': 10,
+  BB: 10,
+  B: 11,
+  CB: 11
+}
+
 let essentia: Essentia | null = null
 let essentiaFailed = false
 
@@ -59,34 +91,77 @@ function fold(bpm: number): number {
   return bpm
 }
 
-function essentiaEstimate(
+function parseKeyResult(result: {
+  key?: unknown
+  scale?: unknown
+  strength?: unknown
+}): KeyAnalysis | null {
+  if (typeof result.key !== 'string' || typeof result.scale !== 'string') return null
+  const name = result.key.trim().replace(/♯/g, '#').replace(/♭/g, 'b').toUpperCase()
+  const key = KEY_NAMES[name]
+  const scale = result.scale.trim().toLowerCase()
+  const strength = Number(result.strength)
+  if (
+    key === undefined ||
+    (scale !== 'major' && scale !== 'minor') ||
+    !Number.isFinite(strength) ||
+    strength < 0
+  ) {
+    return null
+  }
+  return { key, scale, keyStrength: strength }
+}
+
+function essentiaAnalysis(
   mono: Float32Array,
   sampleRate: number
-): { bpm: number; confidence: number } | null {
+): {
+  bpm: { bpm: number; confidence: number } | null
+  key: KeyAnalysis | null
+} {
   const ess = getEssentia()
-  if (!ess) return null
+  if (!ess) return { bpm: null, key: null }
 
   const analyzeSamples = Math.min(mono.length, ANALYZE_SECONDS * sampleRate)
   const sliceStart = Math.max(0, Math.floor((mono.length - analyzeSamples) / 2))
   const slice = mono.subarray(sliceStart, sliceStart + analyzeSamples)
 
   const resampled = resampleLinear(slice, sampleRate, ESSENTIA_SR)
-  const vector = ess.arrayToVector(resampled) as { delete?: () => void }
+  let vector: { delete?: () => void } | null = null
   try {
-    const result = ess.RhythmExtractor2013(vector, 208, 'multifeature', 60)
-    ;(result.ticks as { delete?: () => void }).delete?.()
-    if (result.confidence < MIN_CONFIDENCE || !(result.bpm > 0)) return null
-    return { bpm: result.bpm, confidence: result.confidence }
+    vector = ess.arrayToVector(resampled) as { delete?: () => void }
+    let bpm: { bpm: number; confidence: number } | null = null
+    let key: KeyAnalysis | null = null
+    try {
+      const result = ess.RhythmExtractor2013(vector, 208, 'multifeature', 60)
+      ;(result.ticks as { delete?: () => void }).delete?.()
+      if (result.confidence >= MIN_CONFIDENCE && result.bpm > 0) {
+        bpm = { bpm: result.bpm, confidence: result.confidence }
+      }
+    } catch {
+      // Essentia BPM failure is non-fatal; the comb detector still runs below.
+    }
+    try {
+      // The distributed runtime exposes KeyExtractor, but essentia.js's
+      // package-level declaration omits it from the default Essentia type.
+      const keyExtractor = ess as unknown as {
+        KeyExtractor(audio: unknown): { key?: unknown; scale?: unknown; strength?: unknown }
+      }
+      key = parseKeyResult(keyExtractor.KeyExtractor(vector))
+    } catch {
+      // Key detection is optional and must not prevent BPM/waveform analysis.
+    }
+    return { bpm, key }
   } catch {
-    return null
+    return { bpm: null, key: null }
   } finally {
-    vector.delete?.()
+    vector?.delete?.()
   }
 }
 
 self.onmessage = (e: MessageEvent<BpmRequest>) => {
   const { id, mono, sampleRate } = e.data
-  const proposal = essentiaEstimate(mono, sampleRate)
+  const { bpm: proposal, key } = essentiaAnalysis(mono, sampleRate)
   const result = detectBpm(mono, sampleRate, proposal ? [proposal.bpm] : [])
 
   // Attribute Essentia's confidence only if its proposal actually won
@@ -99,6 +174,9 @@ self.onmessage = (e: MessageEvent<BpmRequest>) => {
     id,
     ...result,
     confidence: agreed ? proposal.confidence : 0,
-    engine: agreed ? 'essentia+comb' : 'comb'
+    engine: agreed ? 'essentia+comb' : 'comb',
+    key: key?.key ?? null,
+    scale: key?.scale ?? null,
+    keyStrength: key?.keyStrength ?? null
   })
 }

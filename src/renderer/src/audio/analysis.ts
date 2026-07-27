@@ -4,6 +4,10 @@ export interface BpmAnalysis extends BpmResult {
   /** Multifeature confidence in [0, 5.32]; 0 when the fallback detector was used. */
   confidence: number
   engine: string
+  /** Root note, 0 = C .. 11 = B; null when Essentia key analysis failed. */
+  key: number | null
+  scale: 'major' | 'minor' | null
+  keyStrength: number | null
 }
 
 export interface WaveformPeaks {
@@ -84,7 +88,10 @@ function getWorker(): Worker {
           bpm: e.data.bpm,
           firstBeat: e.data.firstBeat,
           confidence: e.data.confidence,
-          engine: e.data.engine
+          engine: e.data.engine,
+          key: e.data.key,
+          scale: e.data.scale,
+          keyStrength: e.data.keyStrength
         })
       }
     }
