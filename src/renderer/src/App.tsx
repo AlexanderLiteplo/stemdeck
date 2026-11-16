@@ -8,16 +8,25 @@ import { MasterMeter } from './components/MasterMeter'
 import { Mixer } from './components/Mixer'
 import { Knob } from './components/Knob'
 import { ReelControls } from './components/ReelControls'
+import { TooltipLayer, tip } from './components/TooltipLayer'
+import { installKeyboard } from './keyboard'
+import { initStudio, setView } from './studio/actions'
+import { useStudio } from './studio/store'
+import { Studio } from './studio/ui/Studio'
 
 export default function App() {
   const engineReady = useStore((s) => s.engineReady)
   const recording = useStore((s) => s.recording)
   const masterGain = useStore((s) => s.masterGain)
   const toast = useStore((s) => s.toast)
+  const view = useStudio((s) => s.view)
   const [initError, setInitError] = useState<string | null>(null)
 
   useEffect(() => {
-    initApp().catch((err) => setInitError((err as Error).message))
+    initApp()
+      .then(initStudio)
+      .catch((err) => setInitError((err as Error).message))
+    return installKeyboard()
   }, [])
 
   if (initError) {
@@ -33,10 +42,26 @@ export default function App() {
         <h1 className="logo">
           STEM<span>DECK</span>
         </h1>
+        <div className="view-switch">
+          <button
+            className={view === 'decks' ? 'active' : ''}
+            onClick={() => setView('decks')}
+            {...tip('Decks', 'Two-deck DJ mode. Number keys 1–0 jump between saved sections of deck A, Q–P for deck B — always landing on the beat.')}
+          >
+            DECKS
+          </button>
+          <button
+            className={view === 'studio' ? 'active' : ''}
+            onClick={() => setView('studio')}
+            {...tip('Studio', 'Make beats: chop samples, program drums, play and design synths, all in one loop.')}
+          >
+            STUDIO
+          </button>
+        </div>
         <button
           className={`toggle record ${recording ? 'active' : ''}`}
           onClick={() => void toggleRecording()}
-          title="Record the audio mix only"
+          {...tip('Record mix', 'Records everything you hear — decks and studio — to ~/Music/StemDeck Recordings.')}
         >
           {recording ? '■ STOP REC' : '● REC MIX'}
         </button>
@@ -54,17 +79,23 @@ export default function App() {
         />
       </header>
 
-      <main className="decks-row">
-        <DeckView deckIndex={0} />
-        <Mixer />
-        <DeckView deckIndex={1} />
-      </main>
-
-      <BeatMatchView />
+      {view === 'decks' ? (
+        <>
+          <main className="decks-row">
+            <DeckView deckIndex={0} />
+            <Mixer />
+            <DeckView deckIndex={1} />
+          </main>
+          <BeatMatchView />
+        </>
+      ) : (
+        <Studio />
+      )}
 
       <Library />
 
       {toast && <div className="toast">{toast}</div>}
+      <TooltipLayer />
     </div>
   )
 }

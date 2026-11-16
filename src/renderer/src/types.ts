@@ -59,6 +59,8 @@ export interface PersistedTrack {
   stems: StemPaths | null
   /** Crate this track belongs to, or null/undefined for uncategorized. */
   folderId?: string | null
+  /** Keyboard section markers (seconds) per number-key slot. */
+  sections?: (number | null)[]
 }
 
 export interface PersistedFolder {

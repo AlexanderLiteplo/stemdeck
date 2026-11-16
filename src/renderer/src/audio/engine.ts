@@ -258,6 +258,27 @@ export class DeckEngine {
     this.node.port.postMessage({ type: 'jumpBy', frames: seconds * this.ctx.sampleRate })
   }
 
+  /**
+   * Jump to `targetSeconds` while keeping the current position inside a
+   * phrase of `phraseSeconds` (counted from `anchorSeconds`) — so a jump
+   * pressed on beat 3 lands on beat 3. Optionally (re)sets the loop atomically.
+   */
+  jumpSection(
+    targetSeconds: number,
+    anchorSeconds: number,
+    phraseSeconds: number,
+    loop: { enabled: boolean; start: number; end: number } | null
+  ): void {
+    const sr = this.ctx.sampleRate
+    this.node.port.postMessage({
+      type: 'jumpSection',
+      target: targetSeconds * sr,
+      anchor: anchorSeconds * sr,
+      phrase: phraseSeconds * sr,
+      loop: loop && { enabled: loop.enabled, start: loop.start * sr, end: loop.end * sr }
+    })
+  }
+
   setTempo(rate: number): void {
     this.tempoValue = rate
     this.node.port.postMessage({ type: 'tempo', value: rate })

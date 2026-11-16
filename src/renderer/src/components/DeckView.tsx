@@ -26,6 +26,7 @@ import { useStore } from '../state/store'
 import { AutotunePanel } from './AutotunePanel'
 import { Fader } from './Fader'
 import { Knob } from './Knob'
+import { SectionPads } from './SectionPads'
 import { Waveform } from './Waveform'
 
 function formatTime(seconds: number): string {
@@ -161,6 +162,8 @@ export function DeckView({ deckIndex }: { deckIndex: number }) {
               </button>
             ))}
           </div>
+
+          <SectionPads deckIndex={deckIndex} />
 
           <div className="control-row transport">
             <button className="big-btn cue" onClick={() => cuePress(deckIndex)}>
