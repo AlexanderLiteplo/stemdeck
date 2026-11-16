@@ -31,7 +31,16 @@ export interface TrackInfo {
   stemStatus: string
   /** Crate this track belongs to, or null for uncategorized. */
   folderId: string | null
+  /**
+   * Keyboard section markers: SECTION_SLOTS source times (seconds, snapped to
+   * the bar grid) or null. Pressing a slot's key jumps there in-phase.
+   */
+  sections: (number | null)[]
 }
+
+/** Section slots per track — one per number key 1..0. */
+export const SECTION_SLOTS = 10
+export const emptySections = (): (number | null)[] => Array(SECTION_SLOTS).fill(null)
 
 export interface StemUI {
   name: string
@@ -81,6 +90,16 @@ export interface DeckState {
   autotune: AutotuneState
   stems: StemUI[]
   usingStems: boolean
+  /**
+   * Section jumps keep your place within a phrase of this many bars:
+   * 1 = land on the section's first bar at the same beat; 4 = if you're in bar
+   * 3 of a 4-bar phrase, land in bar 3 of the section.
+   */
+  sectionPhrase: number
+  /** Loop the section (sectionPhrase bars long) after jumping into it. */
+  sectionLoop: boolean
+  /** Slot most recently jumped to, for pad highlighting. */
+  activeSection: number | null
 }
 
 export interface MixerChannelState {
@@ -148,7 +167,10 @@ export const emptyDeck = (): DeckState => ({
     formant: true
   },
   stems: [],
-  usingStems: false
+  usingStems: false,
+  sectionPhrase: 1,
+  sectionLoop: false,
+  activeSection: null
 })
 
 const emptyChannel = (): MixerChannelState => ({

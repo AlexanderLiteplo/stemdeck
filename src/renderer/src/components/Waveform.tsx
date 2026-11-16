@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { engine } from '../audio/engine'
 import { deckPeaks, moveLoop, resizeLoop, seek } from '../controller'
+import { SECTION_KEY_LABELS } from '../sections'
 import { useStore } from '../state/store'
 
 const DECK_COLORS = ['#39c5ff', '#ff7a39']
@@ -15,8 +16,13 @@ type LoopDrag =
 export function Waveform({ deckIndex }: { deckIndex: number }) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const deck = useStore((s) => s.decks[deckIndex])
+  const sections = useStore(
+    (s) => s.library.find((t) => t.id === s.decks[deckIndex].trackId)?.sections ?? null
+  )
   const stateRef = useRef(deck)
   stateRef.current = deck
+  const sectionsRef = useRef(sections)
+  sectionsRef.current = sections
   const dragRef = useRef<LoopDrag | null>(null)
 
   /** Where the loop sits in canvas pixels, or null when there is nothing to show. */
@@ -139,6 +145,20 @@ export function Waveform({ deckIndex }: { deckIndex: number }) {
         ctx.font = 'bold 9px sans-serif'
         ctx.textAlign = 'left'
         ctx.fillText(String(i + 1), x + 3, 10)
+      })
+
+      // Keyboard section markers (number keys / QWERTY row)
+      sectionsRef.current?.forEach((at, i) => {
+        if (at === null) return
+        const x = (at / state.duration) * w
+        const active = state.activeSection === i
+        ctx.fillStyle = active ? '#c084fc' : 'rgba(192, 132, 252, 0.7)'
+        ctx.fillRect(x, 0, active ? 2 : 1, h)
+        ctx.fillRect(x, h - 12, 13, 12)
+        ctx.fillStyle = '#0b0d12'
+        ctx.font = 'bold 9px sans-serif'
+        ctx.textAlign = 'center'
+        ctx.fillText(SECTION_KEY_LABELS[deckIndex][i], x + 6.5, h - 3)
       })
 
       // Cue point

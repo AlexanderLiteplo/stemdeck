@@ -30,6 +30,20 @@ type InMessage =
   | { type: 'pause' }
   | { type: 'seek'; frames: number }
   | { type: 'jumpBy'; frames: number }
+  | {
+      /**
+       * Phase-locked section jump: land at `target` plus however far the
+       * audible position is into its current phrase (measured from `anchor`,
+       * `phrase` frames long). Resolved here against the sample-accurate
+       * position so the groove never slips. Optional loop is applied in the
+       * same step so it can't wrap the read head mid-jump.
+       */
+      type: 'jumpSection'
+      target: number
+      anchor: number
+      phrase: number
+      loop: { enabled: boolean; start: number; end: number } | null
+    }
   | { type: 'tempo'; value: number }
   | { type: 'pitch'; semitones: number }
   | { type: 'keylock'; enabled: boolean }
@@ -123,6 +137,20 @@ class DeckProcessor extends AudioWorkletProcessor {
         this.resetStretch()
         this.postPosition(true)
         break
+      case 'jumpSection': {
+        const into = msg.phrase > 0 ? (((this.reportPos - msg.anchor) % msg.phrase) + msg.phrase) % msg.phrase : 0
+        if (msg.loop) {
+          this.loopEnabled = msg.loop.enabled
+          this.loopStart = msg.loop.start
+          this.loopEnd = msg.loop.end
+        }
+        this.position = Math.max(0, Math.min(msg.target + into, this.length - 1))
+        this.syncVocalPosition()
+        this.reportPos = this.position
+        this.resetStretch()
+        this.postPosition(true)
+        break
+      }
       case 'tempo':
         if (this.vocalRoute && this.keylock) {
           // SoundTouch source positions are in source samples. Keep the vocal

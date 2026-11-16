@@ -6,6 +6,7 @@ import { engine, type LoadedStem } from './audio/engine'
 import { analyzeBpm, computeHiPeaks, computePeaks, type WaveformPeaks } from './audio/analysis'
 import {
   emptyDeck,
+  emptySections,
   RECORDINGS_VIEW,
   showToast,
   updateDeck,
@@ -32,7 +33,18 @@ let trackCounter = 0
 /** Bump when the BPM pipeline changes; older library entries re-analyze on startup. */
 const ANALYSIS_VERSION = 2
 
-export async function initApp(): Promise<void> {
+let initPromise: Promise<void> | null = null
+
+/**
+ * Idempotent: React StrictMode mounts effects twice in dev, and two
+ * overlapping engine inits would build two audio graphs and race each other.
+ */
+export function initApp(): Promise<void> {
+  initPromise ??= initAppOnce()
+  return initPromise
+}
+
+async function initAppOnce(): Promise<void> {
   await engine.init()
   // A failure here blanks the whole app, so leave a breadcrumb in the log.
   console.info(
@@ -138,7 +150,8 @@ export async function saveLibrary(): Promise<void> {
         v: t.analysisV,
         peaks: peaks ? encodePeaks(peaks) : null,
         stems: t.stems,
-        folderId: t.folderId
+        folderId: t.folderId,
+        sections: t.sections
       }
     })
   const persistedFolders: PersistedFolder[] = folders.map((f) => ({ id: f.id, name: f.name }))
@@ -205,7 +218,11 @@ async function restoreLibrary(): Promise<void> {
       stems: saved.stems,
       separating: false,
       stemStatus: '',
-      folderId
+      folderId,
+      sections: emptySections().map((empty, i) => {
+        const v = saved.sections?.[i]
+        return typeof v === 'number' && Number.isFinite(v) ? v : empty
+      })
     })
   }
   useStore.setState({
@@ -271,7 +288,8 @@ async function addTrackPaths(paths: string[]): Promise<void> {
       stems: null,
       separating: false,
       stemStatus: '',
-      folderId: targetFolder
+      folderId: targetFolder,
+      sections: emptySections()
     }
     useStore.setState((s) => ({ library: [...s.library, track] }))
     void analyzeTrack(track, selectedModel)
@@ -412,7 +430,7 @@ export async function loadTrackToDeck(deckIndex: number, trackId: string): Promi
   if (!track) return
   const withStems = track.stems !== null
   const deck = engine.decks[deckIndex]
-  const { pitchRange, reverb } = useStore.getState().decks[deckIndex]
+  const { pitchRange, reverb, sectionPhrase, sectionLoop } = useStore.getState().decks[deckIndex]
   autotuneKeyWasSetManually[deckIndex] = false
   const resetDeck = emptyDeck()
   deck.setAutotune(resetDeck.autotune)
@@ -420,6 +438,8 @@ export async function loadTrackToDeck(deckIndex: number, trackId: string): Promi
     ...resetDeck,
     pitchRange,
     reverb,
+    sectionPhrase,
+    sectionLoop,
     loading: true,
     trackId,
     title: track.name
@@ -619,7 +639,7 @@ export function sync(deckIndex: number): void {
 
 // ---------- Loops ----------
 
-function applyLoop(deckIndex: number, active: boolean, start: number, end: number): void {
+export function applyLoop(deckIndex: number, active: boolean, start: number, end: number): void {
   engine.decks[deckIndex].setLoop(active, start, end)
   updateDeck(deckIndex, { loop: { active, start, end } })
 }
