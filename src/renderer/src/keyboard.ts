@@ -3,13 +3,19 @@
  *  Decks view:  1..0 = deck A section keys, Q..P = deck B section keys
  *               (Shift = re-save at playhead, Alt = clear).
  *  Studio view: Space = play/stop, Tab = next track, and the selected track's
- *               instrument: GarageBand-style musical typing for the synth,
- *               a 4×4 pad grid (1234/QWER/ASDF/ZXCV) for drums and chops.
+ *               instrument: GarageBand-style musical typing for the synth
+ *               (or, in CHORDS mode, one in-key chord per A..L key; Shift =
+ *               7th chord; C toggles the mode), a 4×4 pad grid
+ *               (1234/QWER/ASDF/ZXCV) for drums and chops.
  */
 import { SECTION_KEYS, sectionPress } from './sections'
+import { CHORD_KEYS } from './studio/chords'
 import {
+  chordDown,
+  chordUp,
   cycleTrack,
   hitPad,
+  setKeyMode,
   shiftKeyOctave,
   synthDown,
   synthUp,
@@ -50,6 +56,9 @@ export const PAD_KEY_LABELS = ['1', '2', '3', '4', 'Q', 'W', 'E', 'R', 'A', 'S',
 
 /** Which MIDI note each held key started, so octave changes mid-hold still release it. */
 const heldPiano = new Map<string, number>()
+/** Chord pad started by each held key. */
+const heldChord = new Map<string, number>()
+const chordPadOf = (code: string) => (CHORD_KEYS as readonly string[]).indexOf(code)
 
 function isTyping(target: EventTarget | null): boolean {
   const el = target as HTMLElement | null
@@ -91,6 +100,23 @@ function onKeyDown(e: KeyboardEvent): void {
       if (!e.repeat) shiftKeyOctave(e.code === 'KeyZ' ? -1 : 1)
       return
     }
+    if (e.code === 'KeyC') {
+      e.preventDefault()
+      if (e.repeat) return
+      heldPiano.clear()
+      heldChord.clear()
+      setKeyMode(studio.keyMode === 'chords' ? 'notes' : 'chords')
+      return
+    }
+    if (studio.keyMode === 'chords') {
+      const pad = chordPadOf(e.code)
+      if (pad === -1) return
+      e.preventDefault()
+      if (e.repeat || heldChord.has(e.code)) return
+      heldChord.set(e.code, pad)
+      chordDown(pad, e.shiftKey)
+      return
+    }
     const semis = PIANO_KEYS[e.code]
     if (semis === undefined) return
     e.preventDefault()
@@ -108,6 +134,12 @@ function onKeyDown(e: KeyboardEvent): void {
 }
 
 function onKeyUp(e: KeyboardEvent): void {
+  const pad = heldChord.get(e.code)
+  if (pad !== undefined) {
+    heldChord.delete(e.code)
+    chordUp(pad)
+    return
+  }
   const midi = heldPiano.get(e.code)
   if (midi === undefined) return
   heldPiano.delete(e.code)
@@ -117,6 +149,8 @@ function onKeyUp(e: KeyboardEvent): void {
 function releaseAll(): void {
   for (const midi of heldPiano.values()) synthUp(midi)
   heldPiano.clear()
+  for (const pad of heldChord.values()) chordUp(pad)
+  heldChord.clear()
 }
 
 let installed = false

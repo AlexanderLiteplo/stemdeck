@@ -16,6 +16,7 @@ import type {
   StudioTrackId,
   SynthPatch
 } from './types'
+import type { SongScale } from './chords'
 
 export type AppView = 'decks' | 'studio'
 
@@ -45,6 +46,22 @@ export interface StudioState {
   rollBase: number
   /** MIDI notes currently held (for keyboard highlighting). */
   heldNotes: number[]
+  /** What the synth's computer keys play: single notes, or one chord per key. */
+  keyMode: KeyMode
+  /** Song key root for chord pads, 0 = C .. 11 = B. */
+  songKey: number
+  songScale: SongScale
+  /** Chord pad currently held, for the chord readout and pad highlight. */
+  activeChord: ActiveChord | null
+}
+
+export type KeyMode = 'notes' | 'chords'
+
+export interface ActiveChord {
+  /** Index into chordPads(). */
+  pad: number
+  seventh: boolean
+  notes: number[]
 }
 
 const STORAGE_KEY = 'stemdeck.studio.v1'
@@ -67,6 +84,9 @@ type Persisted = Pick<
   | 'mixer'
   | 'keyOctave'
   | 'rollBase'
+  | 'keyMode'
+  | 'songKey'
+  | 'songScale'
 >
 
 function loadPersisted(): Partial<Persisted> {
@@ -104,7 +124,11 @@ export const useStudio = create<StudioState>(() => ({
   },
   keyOctave: saved.keyOctave ?? 4,
   rollBase: saved.rollBase ?? 48,
-  heldNotes: []
+  heldNotes: [],
+  keyMode: saved.keyMode ?? 'notes',
+  songKey: saved.songKey ?? 0,
+  songScale: saved.songScale ?? 'minor',
+  activeChord: null
 }))
 
 // Debounced persistence — patterns change on every click while painting.
@@ -127,7 +151,10 @@ useStudio.subscribe((s) => {
       chopTitle: s.chopTitle,
       mixer: s.mixer,
       keyOctave: s.keyOctave,
-      rollBase: s.rollBase
+      rollBase: s.rollBase,
+      keyMode: s.keyMode,
+      songKey: s.songKey,
+      songScale: s.songScale
     }
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(data))

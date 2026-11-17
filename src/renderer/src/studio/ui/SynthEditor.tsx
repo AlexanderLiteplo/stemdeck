@@ -11,7 +11,9 @@ import {
   updatePatch
 } from '../actions'
 import { useStudio } from '../store'
+import { noteNamer } from '../chords'
 import type { Wave } from '../types'
+import { ChordBar } from './ChordPads'
 import { Param, PresetBar, Seg, fmt } from './Param'
 
 const WAVES: readonly Wave[] = ['sine', 'triangle', 'sawtooth', 'square']
@@ -29,7 +31,7 @@ export function SynthEditor() {
   return (
     <div className="instrument synth-editor">
       <div className="instrument-head">
-        <span className="instrument-name" {...tip('Synth', 'A subtractive synthesizer: oscillators make a raw tone, the filter carves it, envelopes shape it over time. Play it with your computer keyboard (A–; row, Z/X = octave) or click the keys below.')}>
+        <span className="instrument-name" {...tip('Synth', 'A subtractive synthesizer: oscillators make a raw tone, the filter carves it, envelopes shape it over time. Play it with your computer keyboard (A–; row, Z/X = octave) or click the keys below. Press C for CHORDS mode: one in-key chord per key.')}>
           SYNTH
         </span>
         <PresetBar
@@ -129,6 +131,7 @@ export function SynthEditor() {
         </section>
       </div>
 
+      <ChordBar />
       <PianoKeyboard />
     </div>
   )
@@ -176,12 +179,24 @@ function EnvGraph({ env }: { env: { attack: number; decay: number; sustain: numb
   )
 }
 
-/** Two-octave clickable keyboard showing the computer-key mapping. */
+/**
+ * Two-octave clickable keyboard. Held keys light up with their note name, so
+ * playing chords doubles as learning their shapes; in NOTES mode each key also
+ * shows the computer key that plays it.
+ */
 function PianoKeyboard() {
   const keyOctave = useStudio((s) => s.keyOctave)
   const held = useStudio((s) => s.heldNotes)
+  const chords = useStudio((s) => s.keyMode === 'chords')
+  const chordRoot = useStudio((s) => s.activeChord?.notes[0])
+  const songKey = useStudio((s) => s.songKey)
+  const songScale = useStudio((s) => s.songScale)
+  const spell = noteNamer(songKey, songScale)
   const base = (keyOctave + 1) * 12
-  const keyLabel = new Map(Object.entries(PIANO_KEYS).map(([code, semi]) => [semi, code.replace('Key', '').replace('Semicolon', ';').replace('Quote', "'")]))
+  const keyLabel = chords
+    ? new Map<number, string>()
+    : new Map(Object.entries(PIANO_KEYS).map(([code, semi]) => [semi, code.replace('Key', '').replace('Semicolon', ';').replace('Quote', "'")]))
+  const lit = (n: number) => (held.includes(n) ? { name: chords ? spell(n) : noteName(n).replace(/-?\d+$/, ''), root: n === chordRoot } : null)
   const notes = Array.from({ length: 25 }, (_, i) => base + i)
   const whites = notes.filter((n) => ![1, 3, 6, 8, 10].includes(n % 12))
 
@@ -194,7 +209,7 @@ function PianoKeyboard() {
       </div>
       <div className="piano">
         {whites.map((n) => (
-          <PianoKey key={n} midi={n} black={false} held={held.includes(n)} label={keyLabel.get(n - base)} />
+          <PianoKey key={n} midi={n} black={false} lit={lit(n)} label={keyLabel.get(n - base)} />
         ))}
         {notes
           .filter((n) => [1, 3, 6, 8, 10].includes(n % 12))
@@ -205,7 +220,7 @@ function PianoKeyboard() {
                 key={n}
                 midi={n}
                 black
-                held={held.includes(n)}
+                lit={lit(n)}
                 label={keyLabel.get(n - base)}
                 left={`calc(${(whiteIndex / whites.length) * 100}% - ${100 / whites.length / 3}%)`}
               />
@@ -219,19 +234,20 @@ function PianoKeyboard() {
 function PianoKey({
   midi,
   black,
-  held,
+  lit,
   label,
   left
 }: {
   midi: number
   black: boolean
-  held: boolean
+  /** Set while the note sounds: its spelled name, and whether it's the chord root. */
+  lit: { name: string; root: boolean } | null
   label?: string
   left?: string
 }) {
   return (
     <div
-      className={`pkey ${black ? 'black' : 'white'} ${held ? 'held' : ''}`}
+      className={`pkey ${black ? 'black' : 'white'} ${lit ? 'held' : ''} ${lit?.root ? 'root' : ''}`}
       style={left ? { left } : undefined}
       onPointerDown={(e) => {
         e.currentTarget.setPointerCapture(e.pointerId)
@@ -240,6 +256,7 @@ function PianoKey({
       onPointerUp={() => synthUp(midi)}
       onPointerCancel={() => synthUp(midi)}
     >
+      {lit && <span className="pkey-lit">{lit.name}</span>}
       {label && <span className="pkey-label">{label}</span>}
       {midi % 12 === 0 && <span className="pkey-note">{noteName(midi)}</span>}
     </div>

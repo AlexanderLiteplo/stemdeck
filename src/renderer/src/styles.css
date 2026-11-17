@@ -1448,6 +1448,168 @@ button:disabled {
   display: none;
 }
 
+.pkey.held.root {
+  background: linear-gradient(#ffe48a, var(--yellow)) !important;
+  color: #2a2100;
+}
+
+.pkey-lit {
+  position: absolute;
+  top: 38%;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.2px;
+  pointer-events: none;
+}
+
+.pkey.black .pkey-lit {
+  top: auto;
+  bottom: 6px;
+  font-size: 9px;
+}
+
+/* Chord pads */
+
+.chord-bar {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 8px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+
+.chord-bar.on {
+  border-color: #3b3170;
+}
+
+.chord-controls {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  min-height: 26px;
+}
+
+.mini-btn.warn {
+  border-color: var(--yellow);
+  color: var(--yellow);
+}
+
+.chord-readout {
+  margin-left: auto;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  white-space: nowrap;
+}
+
+.chord-readout.idle {
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.cr-name {
+  font-size: 18px;
+  font-weight: 800;
+  color: #fff;
+}
+
+.cr-num {
+  font-size: 12px;
+  font-weight: 700;
+  color: #c9baff;
+}
+
+.cr-notes {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--yellow);
+  letter-spacing: 0.5px;
+}
+
+.chord-pads {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.chord-pad {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  margin: 0;
+  padding: 14px 4px 7px;
+  background: linear-gradient(#20263a, #171c2a);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  touch-action: none;
+  user-select: none;
+  transition: transform 60ms ease, background 60ms ease;
+}
+
+.chord-pad:hover {
+  border-color: #4a3f8f;
+}
+
+.chord-pad.color {
+  border-style: dashed;
+}
+
+.chord-pad.active {
+  background: linear-gradient(#a891ff, var(--accent));
+  border-color: #c9baff;
+  transform: scale(0.97);
+}
+
+.cp-key {
+  position: absolute;
+  top: 4px;
+  left: 6px;
+  font-size: 9px;
+  font-weight: 800;
+  color: var(--dim);
+}
+
+.cp-name {
+  font-size: 15px;
+  font-weight: 800;
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 100%;
+}
+
+.cp-num {
+  font-size: 10px;
+  font-weight: 700;
+  color: #9d8cf0;
+}
+
+.chord-pad.color .cp-num {
+  color: var(--yellow);
+}
+
+.chord-pad.active .cp-key,
+.chord-pad.active .cp-name,
+.chord-pad.active .cp-num {
+  color: #fff;
+}
+
+.chord-hint {
+  grid-column: 1 / -1;
+  font-size: 10px;
+  color: var(--dim);
+}
+
+.chord-hint b {
+  color: var(--text);
+}
+
 /* Pads */
 
 .drum-body {
