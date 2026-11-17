@@ -170,27 +170,32 @@ export function setChopStep(pad: number, step: number, velocity: number): void {
   commitPattern({ ...p, chops })
 }
 
-/** Notes may not overlap on the same pitch: a new note trims/replaces what's under it. */
+/** True when two notes share a pitch and their spans overlap. */
+function collides(a: SynthNote, b: SynthNote): boolean {
+  return a.note === b.note && a.step < b.step + b.length && b.step < a.step + a.length
+}
+
+/**
+ * Lay `added` on top of `base`: anything in `base` that they'd overlap on the
+ * same pitch is replaced, so no two notes ever stack on one key.
+ */
+export function layNotes(base: SynthNote[], added: SynthNote[]): SynthNote[] {
+  return [...base.filter((n) => !added.some((a) => collides(a, n))), ...added]
+}
+
 export function addNote(note: SynthNote): void {
-  const p = get().pattern
-  const end = note.step + note.length
-  const notes = p.notes.filter(
-    (n) => n.note !== note.note || n.step + n.length <= note.step || n.step >= end
-  )
-  commitPattern({ ...p, notes: [...notes, note] })
+  placeNotes([note])
 }
 
-export function removeNote(target: SynthNote): void {
+/** Add several notes at once (a dropped chord), replacing whatever they land on. */
+export function placeNotes(added: SynthNote[]): void {
   const p = get().pattern
-  commitPattern({ ...p, notes: p.notes.filter((n) => n !== target) })
+  commitPattern({ ...p, notes: layNotes(p.notes, added) })
 }
 
-export function resizeNote(target: SynthNote, length: number): void {
-  const p = get().pattern
-  commitPattern({
-    ...p,
-    notes: p.notes.map((n) => (n === target ? { ...n, length: Math.max(1, length) } : n))
-  })
+/** Replace the whole note list (piano-roll edits compute it themselves). */
+export function setNotes(notes: SynthNote[]): void {
+  commitPattern({ ...get().pattern, notes })
 }
 
 /** Copy the first half of the pattern onto the second (quick way to build 2/4-bar loops). */

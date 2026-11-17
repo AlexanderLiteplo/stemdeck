@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { tip } from '../../components/TooltipLayer'
 import { chordDown, chordUp, matchDeckKey, setKeyMode, setSongKey, updatePatch } from '../actions'
 import {
@@ -11,6 +11,7 @@ import {
   type SongScale
 } from '../chords'
 import { useStudio } from '../store'
+import { chordDropTarget, useChordDrag } from './chordDrag'
 import { Seg } from './Param'
 
 /** True while either Shift key is down, so pads can preview their 7th versions. */
@@ -39,6 +40,9 @@ export function ChordBar() {
   const mono = useStudio((s) => s.patch.mono)
   const active = useStudio((s) => s.activeChord)
   const shift = useShiftHeld()
+  const dragging = useChordDrag((s) => s.drag)
+  /** Where the current pad press started, to tell a tap from a drag. */
+  const press = useRef<{ pad: number; x: number; y: number } | null>(null)
   const chords = keyMode === 'chords'
   const pads = chordPads(songScale)
   const spell = noteNamer(songKey, songScale)
@@ -97,21 +101,46 @@ export function ChordBar() {
       {chords && (
         <div className="chord-pads">
           {pads.map((pad, i) => {
-            const seventh = active?.pad === i ? active.seventh : shift
+            const seventh = dragging?.pad === i ? dragging.seventh : active?.pad === i ? active.seventh : shift
             const color = i >= 7
             return (
               <button
                 key={i}
-                className={`chord-pad ${active?.pad === i ? 'active' : ''} ${color ? 'color' : ''}`}
+                className={`chord-pad ${active?.pad === i || dragging?.pad === i ? 'active' : ''} ${color ? 'color' : ''}`}
                 onPointerDown={(e) => {
+                  if (e.button !== 0) return
                   e.currentTarget.setPointerCapture(e.pointerId)
+                  press.current = { pad: i, x: e.clientX, y: e.clientY }
                   chordDown(i, e.shiftKey)
                 }}
-                onPointerUp={() => chordUp(i)}
-                onPointerCancel={() => chordUp(i)}
+                onPointerMove={(e) => {
+                  const p = press.current
+                  if (!p || p.pad !== i) return
+                  if (!useChordDrag.getState().drag) {
+                    // A few pixels of travel turns the tap into a drag: stop the sound, pick up the chord.
+                    if (Math.hypot(e.clientX - p.x, e.clientY - p.y) < 6) return
+                    chordUp(i)
+                  }
+                  useChordDrag.setState({
+                    drag: { pad: i, seventh: e.shiftKey, x: e.clientX, y: e.clientY, fine: e.altKey }
+                  })
+                }}
+                onPointerUp={() => {
+                  press.current = null
+                  const drag = useChordDrag.getState().drag
+                  if (drag) {
+                    useChordDrag.setState({ drag: null })
+                    chordDropTarget.drop?.(drag)
+                  } else chordUp(i)
+                }}
+                onPointerCancel={() => {
+                  press.current = null
+                  useChordDrag.setState({ drag: null })
+                  chordUp(i)
+                }}
                 {...tip(
                   `${chordName(pad, songKey, songScale, seventh)}  ·  ${chordNumeral(pad, seventh)}${color ? '  ·  borrowed' : ''}`,
-                  `${pad.feel} Hold Shift for the 7th chord (${chordName(pad, songKey, songScale, true)}): richer, jazzier.`
+                  `${pad.feel} Hold Shift for the 7th chord (${chordName(pad, songKey, songScale, true)}): richer, jazzier. Drag it onto the piano roll to write it into the loop.`
                 )}
               >
                 <span className="cp-key">{CHORD_KEY_LABELS[i]}</span>
@@ -121,8 +150,14 @@ export function ChordBar() {
             )
           })}
           <span className="chord-hint">
-            Hold <b>Shift</b> for 7ths · <b>{spell(songKey)}</b> {songScale} · K L = borrowed
+            Hold <b>Shift</b> for 7ths · <b>Drag</b> a pad onto the piano roll to write it in · <b>{spell(songKey)}</b>{' '}
+            {songScale} · K L = borrowed
           </span>
+        </div>
+      )}
+      {dragging && (
+        <div className="chord-drag-chip" style={{ left: dragging.x, top: dragging.y }}>
+          {chordName(pads[dragging.pad], songKey, songScale, dragging.seventh)}
         </div>
       )}
     </div>
