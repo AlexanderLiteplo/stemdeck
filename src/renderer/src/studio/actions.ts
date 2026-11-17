@@ -6,8 +6,9 @@ import { engine } from '../audio/engine'
 import { computePeaks, type WaveformPeaks } from '../audio/analysis'
 import { showToast, useStore } from '../state/store'
 import { studio } from './engine'
+import { chordNotes, chordPads, type SongScale } from './chords'
 import { DRUM_KITS, SYNTH_PRESETS, cloneKit, clonePatch, emptyPattern } from './presets'
-import { useStudio, type AppView } from './store'
+import { useStudio, type AppView, type KeyMode } from './store'
 import {
   CHOP_PADS,
   DRUM_VOICES,
@@ -412,7 +413,54 @@ export function synthUp(midi: number): void {
 export function releaseAllKeys(): void {
   for (const midi of [...liveNotes.keys()]) synthUp(midi)
   studio.allNotesOff()
-  set({ heldNotes: [] })
+  set({ heldNotes: [], activeChord: null })
+}
+
+// ---------- Chord pads ----------
+
+/** Play chord pad `pad` (0..8) of the current song key; replaces any held chord. */
+export function chordDown(pad: number, seventh: boolean, velocity = 0.8): void {
+  const { songKey, songScale, keyOctave, activeChord } = get()
+  const def = chordPads(songScale)[pad]
+  if (!def) return
+  if (activeChord) chordUp()
+  const notes = chordNotes(def, songKey, (keyOctave + 1) * 12, seventh)
+  set({ activeChord: { pad, seventh, notes } })
+  for (const midi of notes) synthDown(midi, velocity)
+}
+
+/** Release the held chord (no-op when `pad` is given and a different pad is held). */
+export function chordUp(pad?: number): void {
+  const active = get().activeChord
+  if (!active || (pad !== undefined && pad !== active.pad)) return
+  set({ activeChord: null })
+  for (const midi of active.notes) synthUp(midi)
+}
+
+export function setKeyMode(mode: KeyMode): void {
+  releaseAllKeys()
+  set({ keyMode: mode })
+}
+
+export function setSongKey(key: number, scale: SongScale): void {
+  releaseAllKeys()
+  set({ songKey: ((key % 12) + 12) % 12, songScale: scale })
+}
+
+/** Use the key StemDeck detected for the track on a deck. */
+export function matchDeckKey(deckIndex: number): void {
+  const { decks, library } = useStore.getState()
+  const track = library.find((t) => t.id === decks[deckIndex].trackId)
+  const label = deckIndex === 0 ? 'A' : 'B'
+  if (!track) {
+    showToast(`Load a track on deck ${label} first`)
+    return
+  }
+  if (track.musicalKey === null || track.musicalScale === null) {
+    showToast(`No key detected for the track on deck ${label}`)
+    return
+  }
+  setSongKey(track.musicalKey, track.musicalScale)
 }
 
 export function shiftKeyOctave(delta: number): void {
