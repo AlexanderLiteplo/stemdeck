@@ -1,12 +1,19 @@
 import {
   CHOP_PADS,
+  CHOP_TRACK,
+  DRUM_TRACK,
   DRUM_VOICES,
   MAX_STEPS,
   type ChopSettings,
+  type Clip,
   type DrumKit,
+  type DrumPattern,
   type DrumVoice,
+  type NotePattern,
   type Pattern,
-  type SynthPatch
+  type StudioTrack,
+  type SynthPatch,
+  type TrackKind
 } from './types'
 import { normalizePatch } from './patch'
 
@@ -493,40 +500,83 @@ const KITS: DrumKit[] = [
 
 export const DRUM_KITS: DrumKit[] = KITS.map((kit) => ({ group: DONDA_GROUP, ...kit }))
 
-export function emptyPattern(bars: 1 | 2 | 4 = 1): Pattern {
-  const drums = Object.fromEntries(
-    DRUM_VOICES.map((id) => [id, Array<number>(MAX_STEPS).fill(0)])
-  ) as Pattern['drums']
-  return {
-    bars,
-    drums,
-    chops: Array.from({ length: CHOP_PADS }, () => Array<number>(MAX_STEPS).fill(0)),
-    notes: []
+export const uid = (prefix: string): string => `${prefix}-${Math.random().toString(36).slice(2, 8)}`
+
+/** A blank pattern of the right shape for a track of `kind`. */
+export function newPattern(
+  kind: TrackKind,
+  trackId: string,
+  name: string,
+  bars: Pattern['bars'] = 1,
+  id = uid('pat')
+): Pattern {
+  const base = { id, name, trackId, bars }
+  if (kind === 'drums') {
+    const drums = Object.fromEntries(
+      DRUM_VOICES.map((voice) => [voice, Array<number>(MAX_STEPS).fill(0)])
+    ) as DrumPattern['drums']
+    return { ...base, kind, drums }
   }
+  if (kind === 'chops') {
+    return { ...base, kind, chops: Array.from({ length: CHOP_PADS }, () => Array<number>(MAX_STEPS).fill(0)) }
+  }
+  return { ...base, kind, notes: [] }
 }
 
-export function demoPattern(): Pattern {
-  const pattern = emptyPattern(2)
+export interface Project {
+  tracks: StudioTrack[]
+  patterns: Record<string, Pattern>
+  clips: Clip[]
+}
+
+/** The three starting tracks, each with one empty pattern "A" and nothing on the timeline. */
+export function blankProject(): Project {
+  const tracks: StudioTrack[] = [
+    { id: DRUM_TRACK, kind: 'drums', name: 'DRUMS', volume: 0.9, mute: false, solo: false, patternId: 'drums-a' },
+    { id: CHOP_TRACK, kind: 'chops', name: 'CHOPS', volume: 0.9, mute: false, solo: false, patternId: 'chops-a' },
+    {
+      id: 'synth',
+      kind: 'synth',
+      name: 'SYNTH',
+      volume: 0.8,
+      mute: false,
+      solo: false,
+      patternId: 'synth-a',
+      patch: clonePatch(SYNTH_PRESETS[0])
+    }
+  ]
+  const patterns: Record<string, Pattern> = {}
+  for (const track of tracks) {
+    patterns[track.patternId] = newPattern(track.kind, track.id, 'A', 2, track.patternId)
+  }
+  return { tracks, patterns, clips: [] }
+}
+
+/** First-run project: a two-bar beat and chord loop, laid out as four bars on the timeline. */
+export function demoProject(): Project {
+  const project = blankProject()
+  const drums = project.patterns['drums-a'] as DrumPattern
   for (const [step, velocity] of [[0, 1], [3, 0.72], [11, 0.86], [16, 0.94], [19, 0.7], [27, 0.84]] as const) {
-    pattern.drums.kick[step] = velocity
+    drums.drums.kick[step] = velocity
   }
   for (const step of [8, 24]) {
-    pattern.drums.snare[step] = 0.92
-    pattern.drums.clap[step] = 0.72
+    drums.drums.snare[step] = 0.92
+    drums.drums.clap[step] = 0.72
   }
   for (let step = 0; step < 32; step += 2) {
-    if (step !== 6 && step !== 22) pattern.drums.hat[step] = step % 4 === 0 ? 0.72 : 0.6
+    if (step !== 6 && step !== 22) drums.drums.hat[step] = step % 4 === 0 ? 0.72 : 0.6
   }
   for (const [step, velocity] of [[7, 0.7], [9, 0.76], [13, 0.72], [14, 0.82], [15, 0.9], [30, 0.82], [31, 1]] as const) {
-    pattern.drums.hat[step] = velocity
+    drums.drums.hat[step] = velocity
   }
-  pattern.drums.openhat[6] = 0.62
-  pattern.drums.openhat[22] = 0.66
-  pattern.drums.bass808[0] = 0.95
-  pattern.drums.bass808[11] = 0.86
-  pattern.drums.bass808[16] = 0.92
-  pattern.drums.bass808[27] = 0.88
-  pattern.notes = [
+  drums.drums.openhat[6] = 0.62
+  drums.drums.openhat[22] = 0.66
+  drums.drums.bass808[0] = 0.95
+  drums.drums.bass808[11] = 0.86
+  drums.drums.bass808[16] = 0.92
+  drums.drums.bass808[27] = 0.88
+  const chords = project.patterns['synth-a'] as NotePattern
+  chords.notes = [
     { step: 0, note: 57, length: 8, velocity: 0.72 },
     { step: 0, note: 60, length: 8, velocity: 0.66 },
     { step: 0, note: 64, length: 8, velocity: 0.64 },
@@ -540,7 +590,11 @@ export function demoPattern(): Pattern {
     { step: 24, note: 59, length: 8, velocity: 0.66 },
     { step: 24, note: 62, length: 8, velocity: 0.64 }
   ]
-  return pattern
+  project.clips = [
+    { id: uid('clip'), trackId: DRUM_TRACK, patternId: 'drums-a', start: 0, length: 64, offset: 0 },
+    { id: uid('clip'), trackId: 'synth', patternId: 'synth-a', start: 0, length: 64, offset: 0 }
+  ]
+  return project
 }
 
 export function defaultChopSettings(): ChopSettings {
@@ -565,8 +619,4 @@ export function clonePatch(patch: SynthPatch): SynthPatch {
 
 export function cloneKit(kit: DrumKit): DrumKit {
   return structuredClone(kit)
-}
-
-export function clonePattern(pattern: Pattern): Pattern {
-  return structuredClone(pattern)
 }

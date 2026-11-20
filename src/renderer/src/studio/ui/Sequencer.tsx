@@ -1,23 +1,27 @@
+import { useMemo } from 'react'
 import { tip } from '../../components/TooltipLayer'
 import {
-  clearTrack,
+  addPattern,
+  clearPattern,
+  deleteOpenPattern,
   duplicateBars,
   hitChop,
   hitDrum,
+  openPattern,
   setBars,
   setChopStep,
   setDrumStep,
   shiftRoll
 } from '../actions'
-import { useStudio } from '../store'
+import { selChops, selDrums, selPattern, selTrack, useStudio } from '../store'
 import { CHOP_PADS, DRUM_VOICES, STEPS_PER_BAR } from '../types'
+import { PAD_COLORS, patternColor } from './colors'
 import { DRUM_INFO } from './DrumEditor'
 import { Seg } from './Param'
 import { PianoRoll } from './PianoRoll'
 import { Playhead } from './Playhead'
 import { noteName } from './SynthEditor'
 
-const PAD_COLORS = ['#7c5cff', '#39c5ff', '#2ee66b', '#ffd23c', '#ff7a39', '#ff4d6d', '#c084fc', '#22d3ee']
 const TRACK_HELP = {
   drums: 'Click a cell to place a hit, drag to paint a row. Alt-click places a soft (ghost) hit. Each column is a 16th note; bright columns are the beats.',
   chops: 'Each row is one chop pad. Place chops on the grid to rearrange the sample into a new beat.',
@@ -25,32 +29,33 @@ const TRACK_HELP = {
 }
 
 export function Sequencer() {
-  const track = useStudio((s) => s.selectedTrack)
-  const bars = useStudio((s) => s.pattern.bars)
+  const kind = useStudio((s) => selTrack(s).kind)
+  const bars = useStudio((s) => selPattern(s).bars)
   const rollBase = useStudio((s) => s.rollBase)
   const steps = bars * STEPS_PER_BAR
 
   return (
     <div className="sequencer">
       <div className="seq-head">
-        <span className="instrument-name" {...tip('Pattern', TRACK_HELP[track])}>
-          {track === 'synth' ? 'PIANO ROLL' : 'STEPS'}
+        <span className="instrument-name" {...tip('Pattern', TRACK_HELP[kind])}>
+          {kind === 'synth' ? 'PIANO ROLL' : 'STEPS'}
         </span>
+        <PatternPicker />
         <Seg
           options={[1, 2, 4] as const}
           value={bars}
           labels={{ '1': '1 BAR', '2': '2 BARS', '4': '4 BARS' }}
           title="Pattern length"
-          help="How many bars the loop is. Shortening never deletes anything — the extra bars come back when you lengthen it again."
+          help="How many bars this pattern is before it repeats. Shortening never deletes anything — the extra bars come back when you lengthen it again. Different tracks can have different lengths."
           onChange={setBars}
         />
         <button className="mini-btn" onClick={duplicateBars} {...tip('Duplicate', 'Copies the first half of the pattern onto the second half — the fastest way to turn 1 bar into 2, or 2 into 4. Then tweak the ending.')}>
           DUPLICATE
         </button>
-        <button className="mini-btn" onClick={() => clearTrack(track)} {...tip('Clear', `Erase everything on the ${track} track (the other tracks are untouched).`)}>
+        <button className="mini-btn" onClick={clearPattern} {...tip('Clear', 'Erase everything in this pattern. Other patterns and other tracks are untouched.')}>
           CLEAR
         </button>
-        {track === 'synth' && (
+        {kind === 'synth' && (
           <span className="roll-octave" {...tip('Piano roll range', 'Scroll the visible notes up or down an octave.')}>
             <button className="mini-btn" onClick={() => shiftRoll(-12)}>▼ OCT</button>
             <span className="mono">{noteName(rollBase)}–{noteName(rollBase + 23)}</span>
@@ -58,9 +63,54 @@ export function Sequencer() {
           </span>
         )}
       </div>
-      {track === 'drums' && <DrumGrid steps={steps} />}
-      {track === 'chops' && <ChopGrid steps={steps} />}
-      {track === 'synth' && <PianoRoll steps={steps} />}
+      {kind === 'drums' && <DrumGrid steps={steps} />}
+      {kind === 'chops' && <ChopGrid steps={steps} />}
+      {kind === 'synth' && <PianoRoll steps={steps} />}
+    </div>
+  )
+}
+
+/** The selected track's patterns: pick which one to edit, start a new one, or branch a variation. */
+function PatternPicker() {
+  const trackId = useStudio((s) => s.selectedTrack)
+  const openId = useStudio((s) => selTrack(s).patternId)
+  const patterns = useStudio((s) => s.patterns)
+  const clips = useStudio((s) => s.clips)
+  const mine = useMemo(
+    () =>
+      Object.values(patterns)
+        .filter((p) => p.trackId === trackId)
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })),
+    [patterns, trackId]
+  )
+
+  return (
+    <div className="pattern-picker">
+      {mine.map((p) => {
+        const uses = clips.filter((c) => c.patternId === p.id).length
+        return (
+          <button
+            key={p.id}
+            className={`pattern-chip ${p.id === openId ? 'active' : ''}`}
+            style={{ borderColor: patternColor(p.name), ...(p.id === openId ? { background: patternColor(p.name) } : {}) }}
+            onClick={() => openPattern(p.id)}
+            {...tip(`Pattern ${p.name}`, `${uses === 0 ? 'Not on the timeline yet.' : `Played by ${uses} clip${uses === 1 ? '' : 's'} on the timeline — editing it changes all of them.`} The open pattern is what LOOP mode plays and what a double-click on the timeline drops in.`)}
+          >
+            {p.name}
+          </button>
+        )
+      })}
+      <button className="mini-btn" onClick={() => addPattern(false)} {...tip('New pattern', 'Start an empty pattern on this track — a different beat or melody for another part of the song.')}>
+        ＋ NEW
+      </button>
+      <button className="mini-btn" onClick={() => addPattern(true)} {...tip('Copy as variation', 'Duplicates this pattern under the next letter so you can change it — add a fill, drop the kick — without touching the original.')}>
+        COPY
+      </button>
+      {mine.length > 1 && (
+        <button className="mini-btn" onClick={deleteOpenPattern} {...tip('Delete pattern', 'Deletes this pattern and every clip on the timeline that plays it.')}>
+          ✕
+        </button>
+      )}
     </div>
   )
 }
@@ -126,7 +176,7 @@ function StepGrid({
 }
 
 function DrumGrid({ steps }: { steps: number }) {
-  const drums = useStudio((s) => s.pattern.drums)
+  const drums = useStudio(selDrums)
   const rows: Row[] = DRUM_VOICES.map((id) => ({
     key: id,
     label: DRUM_INFO[id].label,
@@ -137,7 +187,7 @@ function DrumGrid({ steps }: { steps: number }) {
 }
 
 function ChopGrid({ steps }: { steps: number }) {
-  const chops = useStudio((s) => s.pattern.chops)
+  const chops = useStudio(selChops)
   const rows: Row[] = Array.from({ length: CHOP_PADS }, (_, pad) => ({
     key: String(pad),
     label: `CHOP ${pad + 1}`,

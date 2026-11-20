@@ -10,7 +10,7 @@ import {
   noteNamer,
   type SongScale
 } from '../chords'
-import { useStudio } from '../store'
+import { selPatch, useStudio } from '../store'
 import { chordDropTarget, useChordDrag } from './chordDrag'
 import { Seg } from './Param'
 
@@ -37,7 +37,7 @@ export function ChordBar() {
   const keyMode = useStudio((s) => s.keyMode)
   const songKey = useStudio((s) => s.songKey)
   const songScale = useStudio((s) => s.songScale)
-  const mono = useStudio((s) => s.patch.mono)
+  const mono = useStudio((s) => selPatch(s).mono)
   const active = useStudio((s) => s.activeChord)
   const shift = useShiftHeld()
   const dragging = useChordDrag((s) => s.drag)

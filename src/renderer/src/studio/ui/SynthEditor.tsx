@@ -12,7 +12,7 @@ import {
   synthUp,
   updatePatch
 } from '../actions'
-import { useStudio } from '../store'
+import { selPatch, useStudio } from '../store'
 import { noteNamer } from '../chords'
 import { LFO_DIVISIONS, type DistortionType, type LfoShape, type SynthPatch, type Wave } from '../types'
 import { ChordBar } from './ChordPads'
@@ -36,7 +36,7 @@ const fmtRate = (hz: number) => `${hz.toFixed(hz < 1 ? 2 : hz < 10 ? 1 : 0)}Hz`
 const lastDivision = LFO_DIVISIONS.length - 1
 
 export function SynthEditor() {
-  const patch = useStudio((s) => s.patch)
+  const patch = useStudio(selPatch)
   const userPatches = useStudio((s) => s.userPatches)
   const edit = updatePatch
 

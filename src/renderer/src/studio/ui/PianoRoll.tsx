@@ -3,7 +3,7 @@ import { engine } from '../../audio/engine'
 import { addNote, layNotes, placeNotes, setNotes } from '../actions'
 import { chordNotes, chordPads } from '../chords'
 import { studio } from '../engine'
-import { useStudio } from '../store'
+import { selNotes, selPattern, useStudio } from '../store'
 import type { SynthNote } from '../types'
 import { chordDropTarget, useChordDrag, type ChordDrag } from './chordDrag'
 import { Playhead } from './Playhead'
@@ -23,7 +23,8 @@ const keyOf = (n: SynthNote) => `${n.step}:${n.note}`
 function preview(midis: number[], duration = 0.22): void {
   void engine.ctx.resume()
   const now = engine.ctx.currentTime
-  for (const midi of midis.slice(0, 6)) studio.playNote(midi, 0.8, now, duration)
+  const trackId = useStudio.getState().selectedTrack
+  for (const midi of midis.slice(0, 6)) studio.playNote(trackId, midi, 0.8, now, duration)
 }
 
 function isTyping(target: EventTarget | null): boolean {
@@ -90,7 +91,8 @@ type RollDrag =
     }
 
 export function PianoRoll({ steps }: { steps: number }) {
-  const notes = useStudio((s) => s.pattern.notes)
+  const notes = useStudio(selNotes)
+  const patternId = useStudio((s) => selPattern(s).id)
   const rollBase = useStudio((s) => s.rollBase)
   const chordDrag = useChordDrag((s) => s.drag)
   const areaRef = useRef<HTMLDivElement>(null)
@@ -178,10 +180,13 @@ export function PianoRoll({ steps }: { steps: number }) {
     }
   }, [])
 
-  // Editing keys: Delete, Escape, ⌘A, arrows.
+  // A selection belongs to one pattern: opening another must not carry it over.
+  useEffect(() => setSelected(new Set()), [patternId])
+
+  // Editing keys: Delete, Escape, ⌘A, arrows — only while the editor (not the timeline) has focus.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (isTyping(e.target) || drag.current) return
+      if (isTyping(e.target) || drag.current || useStudio.getState().focus !== 'editor') return
       const { notes, selected, steps } = live.current
       const mod = e.metaKey || e.ctrlKey
       if (mod && e.code === 'KeyA') {

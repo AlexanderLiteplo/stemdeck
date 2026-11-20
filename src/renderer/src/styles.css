@@ -1140,67 +1140,206 @@ button:disabled {
   font-size: 11px;
 }
 
-.studio-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  gap: 10px;
+/* ---------- Song timeline ---------- */
+
+.transport-bar .seg button {
+  padding: 8px 12px;
 }
 
-.track-list {
-  width: 180px;
+.arrange {
   flex-shrink: 0;
   display: flex;
   flex-direction: column;
-  gap: 8px;
-}
-
-.track-head {
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 10px;
-  padding: 10px;
-  cursor: pointer;
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  transition: border-color 80ms, background 80ms;
+  overflow: hidden;
 }
 
-.track-head:hover {
+.arrange.focused {
   border-color: #3a4360;
 }
 
-.track-head.selected {
-  border-color: var(--accent);
-  background: #191632;
+.arrange-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
 }
 
-.track-head.muted .track-title {
-  opacity: 0.45;
+.arrange-bar .instrument-name {
+  min-width: 0;
 }
 
-.track-title {
+.arrange-actions {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.arrange-actions .mini-btn,
+.arrange-zoom .mini-btn {
+  margin-right: 0;
+}
+
+.mini-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
+
+.arrange-length {
+  font-size: 11px;
+  color: var(--dim);
+}
+
+.arrange-zoom {
+  display: inline-flex;
+  gap: 4px;
+}
+
+/* One scroller for both axes: the ruler sticks to the top, the track heads to the left. */
+.arrange-body {
+  position: relative;
+  overflow: auto;
+  max-height: 252px;
+  background: #0e1119;
+}
+
+.arrange-grid {
+  position: relative;
+  min-width: 100%;
+}
+
+.arrange-row {
+  display: flex;
+  height: 50px;
+  border-bottom: 1px solid #1b2030;
+}
+
+.arrange-row.ruler-row {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  height: 24px;
+  border-bottom: 1px solid var(--border);
+}
+
+.arrange-corner,
+.arrange-head {
+  position: sticky;
+  left: 0;
+  z-index: 3;
+  width: 196px;
+  flex-shrink: 0;
+  background: var(--panel);
+  border-right: 1px solid var(--border);
+}
+
+.arrange-corner {
+  display: flex;
+  align-items: center;
+  padding: 0 8px;
+}
+
+.arrange-corner .mini-btn {
+  margin: 0;
+  font-size: 9px;
+  letter-spacing: 1px;
+  padding: 3px 8px;
+}
+
+.arrange-head {
   display: flex;
   align-items: center;
   gap: 8px;
+  padding: 0 8px 0 10px;
+  cursor: pointer;
+  border-left: 3px solid transparent;
+  transition: background 80ms;
+}
+
+.arrange-head:hover {
+  background: #171c2a;
+}
+
+.arrange-head.selected {
+  background: #191632;
+  border-left-color: var(--accent);
+}
+
+.arrange-head.muted .head-names,
+.arrange-head.muted .track-icon {
+  opacity: 0.4;
+}
+
+.head-names {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.head-name {
   font-weight: 800;
   letter-spacing: 1.5px;
-  font-size: 12px;
+  font-size: 11px;
+}
+
+.head-sound {
+  font-size: 10px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.head-controls {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+.head-buttons {
+  display: flex;
+  gap: 3px;
+}
+
+/* The shared fader is 28px tall; a track row has room for a slimmer one. */
+.arrange-head .fader.horizontal {
+  height: 14px !important;
+}
+
+.arrange-head .fader-track {
+  height: 4px;
+}
+
+.arrange-head .fader-thumb {
+  top: 0;
+  bottom: 0;
+}
+
+.arrange-body,
+.studio-editor {
+  scrollbar-width: thin;
+  scrollbar-color: #2f3750 transparent;
 }
 
 .track-icon {
   color: var(--accent);
   width: 14px;
   text-align: center;
+  flex-shrink: 0;
 }
 
 .mute-btn {
-  margin-left: auto;
-  width: 22px;
-  height: 20px;
+  margin: 0;
+  width: 20px;
+  height: 17px;
   padding: 0;
-  font-size: 10px;
+  font-size: 9px;
   font-weight: 800;
 }
 
@@ -1210,11 +1349,198 @@ button:disabled {
   color: var(--yellow);
 }
 
-.track-foot {
-  margin: 4px 2px;
-  font-size: 11px;
-  line-height: 1.4;
+.mute-btn.solo.active {
+  background: #0c2f3b;
+  border-color: var(--deck-a);
+  color: var(--deck-a);
+}
+
+.ruler {
+  position: relative;
+  flex-shrink: 0;
+  background: #151a27;
+  cursor: pointer;
+  touch-action: none;
+}
+
+.ruler-bar {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  padding: 5px 0 0 5px;
+  border-left: 1px solid #3a4360;
+  font-size: 10px;
+  font-weight: 700;
   color: var(--dim);
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.cycle-strip {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  background: rgba(122, 132, 153, 0.25);
+  border-bottom: 3px solid var(--dim);
+  pointer-events: none;
+}
+
+.cycle-strip.on {
+  background: rgba(255, 210, 60, 0.22);
+  border-bottom-color: var(--yellow);
+}
+
+.lane {
+  position: relative;
+  flex-shrink: 0;
+  background-image: linear-gradient(90deg, rgba(255, 255, 255, 0.11) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.035) 1px, transparent 1px);
+}
+
+.arrange-row.selected .lane {
+  background-color: rgba(124, 92, 255, 0.06);
+}
+
+.lane-hint {
+  position: absolute;
+  left: 10px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 11px;
+  color: #4d5670;
+  pointer-events: none;
+  white-space: nowrap;
+}
+
+.clip {
+  position: absolute;
+  top: 4px;
+  bottom: 4px;
+  border: 1px solid;
+  border-radius: 5px;
+  overflow: hidden;
+  cursor: grab;
+  touch-action: none;
+}
+
+.clip:active {
+  cursor: grabbing;
+}
+
+.lane.cutting .clip {
+  cursor: col-resize;
+}
+
+/* Edge grips: the outer few pixels of a clip resize it. */
+.clip::before,
+.clip::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  width: 7px;
+  cursor: ew-resize;
+  z-index: 2;
+}
+
+.clip::before {
+  left: 0;
+}
+
+.clip::after {
+  right: 0;
+}
+
+.lane.cutting .clip::before,
+.lane.cutting .clip::after {
+  cursor: col-resize;
+}
+
+.clip.selected {
+  border-color: #fff !important;
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.55), 0 0 10px rgba(255, 255, 255, 0.18);
+  z-index: 1;
+}
+
+.clip.ghost {
+  opacity: 0.6;
+  border-style: dashed;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.clip-name {
+  position: absolute;
+  left: 0;
+  top: 0;
+  padding: 0 5px;
+  border-bottom-right-radius: 4px;
+  font-size: 9px;
+  font-weight: 800;
+  line-height: 13px;
+  color: #0b0d12;
+  pointer-events: none;
+  z-index: 1;
+}
+
+.clip-art {
+  position: absolute;
+  inset: 4px 0 3px;
+  width: 100%;
+  height: calc(100% - 7px);
+  pointer-events: none;
+}
+
+.clip-art rect {
+  fill: rgba(255, 255, 255, 0.82);
+}
+
+.clip-loop {
+  stroke: rgba(255, 255, 255, 0.4);
+  stroke-width: 1;
+  stroke-dasharray: 2 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.song-playhead {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  width: 2px;
+  margin-left: -1px;
+  background: #fff;
+  box-shadow: 0 0 8px rgba(255, 255, 255, 0.7);
+  pointer-events: none;
+  z-index: 2;
+  display: none;
+}
+
+.pattern-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pattern-picker .mini-btn {
+  margin-right: 0;
+}
+
+.pattern-chip {
+  min-width: 26px;
+  height: 24px;
+  padding: 0 7px;
+  border: 1px solid;
+  border-radius: 5px;
+  background: var(--panel-2);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.pattern-chip.active {
+  color: #0b0d12;
 }
 
 .studio-editor {

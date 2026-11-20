@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
-import { studio } from '../engine'
+import { editorPosition } from '../actions'
 
-/** Vertical line that follows the sequencer, positioned without React re-renders. */
+/** Vertical line that follows playback through the open pattern, positioned without React re-renders. */
 export function Playhead({ steps }: { steps: number }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -10,7 +10,7 @@ export function Playhead({ steps }: { steps: number }) {
       raf = requestAnimationFrame(tick)
       const el = ref.current
       if (!el) return
-      const pos = studio.ready ? studio.getStepPosition() : -1
+      const pos = editorPosition()
       if (pos < 0) {
         el.style.display = 'none'
         return

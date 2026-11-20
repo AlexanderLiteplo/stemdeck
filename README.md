@@ -19,15 +19,19 @@ Two decks, a full mixer, beat sync, keylock pitch/tempo control, and one-click A
 
 Each deck has 10 **section keys**: `1`–`0` for deck A, `Q`–`P` for deck B. Press an empty key to save the current bar; press a saved key to jump there. Jumps are resolved sample-accurately inside the audio worklet and keep your position in the bar: hit `1` on beat 3 and you land on beat 3 of section 1, so the groove never breaks. **Phrase lock** (1/2/4/8 bars) also keeps which bar of the phrase you're in, and **LOOP** holds each section like a sampler pad. Shift+key re-saves, Alt+key clears.
 
-## Studio (beat maker)
+## Studio (beat maker → full songs)
 
-Switch to **STUDIO** in the top bar for a simple GarageBand-style loop maker. Its audio runs through the master, so **● REC MIX** captures it too.
+Switch to **STUDIO** in the top bar for a GarageBand-style song maker. Its audio runs through the master, so **● REC MIX** captures it too.
 
+- **Song timeline**: instruments down the left, bars across the top. Each track holds **clips** that play one of its patterns. Double-click a lane to drop the open pattern, drag clips to move them (Alt-drag copies), drag the right edge to loop a clip longer, the left edge to trim it, and use the **✂ CUT** tool or **SPLIT** (⌘T) to slice clips up. ⌘D repeats the selection, ⌫ deletes it. Snap to bars or beats.
+- **Patterns**: every track has its own patterns (A, B, C…), 1, 2 or 4 bars long. Clips with the same letter are linked, so fixing a hi-hat fixes it everywhere. **COPY** branches a variation; **UNIQUE** gives selected clips their own copy.
+- **LOOP / SONG**: LOOP repeats the patterns open in each track while you write the beat; SONG plays the timeline. Click the ruler to move the playhead, drag across it to **CYCLE** a section. One project BPM drives every track, the delay, synced LFOs and tempo-fitted chops.
+- **Tracks**: one drum track, one chop track, and up to 8 synth tracks (**＋ SYNTH TRACK**), each with its own sound, mute, solo and volume.
 - **Chopper**: drag any library track (including YouTube downloads) in. It's sliced on its detected beat grid into 16 pads (⅛ note to 2 bars each). You can fix the sample BPM, nudge the grid, page through the song, chop a single stem, and turn on fit-to-tempo, choke, pitch and fade.
-- **Drums**: 8 synthesized voices (kick, snare, clap, hats, perc, crash, 808) with tune/decay/tone/drive/reverb/level per voice. Comes with 5 Donda-inspired kits; save your own.
-- **Synth**: 2 oscillators + sub/noise/unison, a filter with its own envelope, amp ADSR, LFO, mono/glide, drive, reverb and delay. Comes with 9 Donda-inspired patches (organ, choir pad, sliding 808…); save your own.
-- **Sequencer**: 1/2/4-bar step grid for drums and chops, piano roll for the synth, swing, metronome and live **● REC**, which quantizes what you play into the pattern.
-- **Keyboard**: Space = play/stop, Tab = switch track. On the synth track the A–; row plays notes (Z/X = octave). On drums/chops, 1234 / QWER / ASDF / ZXCV play the pads.
+- **Drums**: 8 synthesized voices (kick, snare, clap, hats, perc, crash, 808) with tune/decay/tone/drive/reverb/level per voice. Comes with 6 kits; save your own.
+- **Synth**: 2 oscillators with FM and ring-mod, sub/noise/unison, a 12/24 dB filter with drive, filter FM and its own envelope, amp ADSR, a pitch-sweep envelope, an LFO with tempo sync and a random shape, and mono/glide. **DESTROY** adds soft/hard/fold/fuzz distortion and a bitcrusher; FX add a phaser, a beat-synced sidechain **PUMP**, reverb and delay. 21 presets, from gospel organ to acid screech; **⚡ CHAOS** rolls a random one and the **MAYHEM PAD** sweeps the filter plus one more knob while you play. Save your own.
+- **Sequencer**: step grid for drums and chops, piano roll for the synth, swing, metronome and live **● REC**, which quantizes what you play into the open pattern.
+- **Keyboard**: Space = play/stop, Tab = switch track. On a synth track the A–; row plays notes (Z/X = octave). On drums/chops, 1234 / QWER / ASDF / ZXCV play the pads.
 - Hover anything for a tooltip explaining what it does.
 
 ## The stem engine
