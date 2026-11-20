@@ -21,7 +21,7 @@ import {
   synthUp,
   togglePlay as toggleStudio
 } from './studio/actions'
-import { useStudio } from './studio/store'
+import { selTrack, useStudio } from './studio/store'
 
 /** Musical typing: key code -> semitones above the octave's C. */
 export const PIANO_KEYS: Record<string, number> = {
@@ -94,7 +94,7 @@ function onKeyDown(e: KeyboardEvent): void {
     return
   }
 
-  if (studio.selectedTrack === 'synth') {
+  if (selTrack(studio).kind === 'synth') {
     if (e.code === 'KeyZ' || e.code === 'KeyX') {
       e.preventDefault()
       if (!e.repeat) shiftKeyOctave(e.code === 'KeyZ' ? -1 : 1)

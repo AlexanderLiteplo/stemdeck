@@ -10,11 +10,12 @@
     "url": "https://github.com/AlexanderLiteplo/stemdeck.git"
   },
   "scripts": {
-    "build:worklet": "esbuild src/worklet/deck-processor.ts --bundle --format=iife --outfile=src/renderer/public/worklets/deck-processor.js && esbuild src/worklet/autotune-processor.ts --bundle --format=iife --outfile=src/renderer/public/worklets/autotune-processor.js",
+    "build:worklet": "esbuild src/worklet/deck-processor.ts --bundle --format=iife --outfile=src/renderer/public/worklets/deck-processor.js && esbuild src/worklet/autotune-processor.ts --bundle --format=iife --outfile=src/renderer/public/worklets/autotune-processor.js && esbuild src/worklet/crush-processor.ts --bundle --format=iife --outfile=src/renderer/public/worklets/crush-processor.js",
     "dev": "npm run build:worklet && electron-vite dev",
     "build": "npm run build:worklet && electron-vite build",
     "start": "npm run build && electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "esbuild src/renderer/src/studio/clips.test.ts --bundle --platform=node --format=esm --outfile=out/test/clips.test.mjs --log-level=warning && node out/test/clips.test.mjs",
     "icon": "electron scripts/make-icon.cjs",
     "dist": "npm run build && electron-builder --mac"
   },

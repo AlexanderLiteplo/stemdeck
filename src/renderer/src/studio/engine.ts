@@ -1,19 +1,26 @@
 import {
+  CHOP_TRACK,
+  DRUM_TRACK,
   DRUM_VOICES,
+  LOOP_STEPS,
   STEPS_PER_BAR,
   type ChopSettings,
+  type CycleRange,
   type DrumKit,
   type DrumVoice,
   type DrumVoiceId,
+  type EngineProject,
+  type EngineTrack,
   type MixerTrack,
   type Pattern,
+  type PlayMode,
   type StudioEngineApi,
-  type StudioTrackId,
   type SynthPatch
 } from './types'
+import { DEFAULT_PATCH } from './patch'
+import { SynthInstrument } from './synth'
 
 const EPSILON = 0.0001
-const MAX_SYNTH_VOICES = 16
 const LOOKAHEAD_MS = 25
 const SCHEDULE_AHEAD = 0.12
 
@@ -21,28 +28,6 @@ interface TrackBus {
   dry: GainNode
   reverb: GainNode
   delay: GainNode
-}
-
-interface PitchParam {
-  param: AudioParam
-  ratio: number
-}
-
-interface SynthVoice {
-  midi: number
-  velocity: number
-  startedAt: number
-  live: boolean
-  releasing: boolean
-  stolen: boolean
-  cleaned: boolean
-  amp: GainNode
-  filter: BiquadFilterNode
-  filterBase: number
-  sources: AudioScheduledSourceNode[]
-  oscillators: OscillatorNode[]
-  nodes: AudioNode[]
-  pitches: PitchParam[]
 }
 
 interface ActiveChop {
@@ -56,27 +41,6 @@ interface ActiveOpenHat {
   output: GainNode
   sources: AudioScheduledSourceNode[]
   stopped: boolean
-}
-
-const INITIAL_PATCH: SynthPatch = {
-  name: 'Init',
-  description: 'A neutral sawtooth patch.',
-  osc1: { wave: 'sawtooth', level: 0.75 },
-  osc2: { wave: 'sine', level: 0, octave: 0, detune: 0 },
-  sub: 0,
-  noise: 0,
-  unison: 1,
-  spread: 0,
-  filter: { type: 'lowpass', cutoff: 12000, resonance: 0.7, envAmount: 0, keyTrack: 0 },
-  ampEnv: { attack: 0.01, decay: 0.2, sustain: 0.8, release: 0.25 },
-  filterEnv: { attack: 0.01, decay: 0.2, sustain: 0.8, release: 0.25 },
-  lfo: { rate: 5, pitch: 0, filter: 0 },
-  glide: 0,
-  mono: false,
-  drive: 0,
-  reverb: 0,
-  delay: 0,
-  volume: 0.75
 }
 
 const DEFAULT_CHOPS: ChopSettings = {
@@ -115,10 +79,6 @@ function clamp(value: number, min: number, max: number): number {
   return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : min
 }
 
-function midiFrequency(midi: number): number {
-  return 440 * 2 ** ((midi - 69) / 12)
-}
-
 function holdAt(param: AudioParam, when: number): void {
   try {
     param.cancelAndHoldAtTime(when)
@@ -151,39 +111,30 @@ function makeNoiseBuffer(ctx: AudioContext): AudioBuffer {
 
 export class StudioEngine implements StudioEngineApi {
   onStep: ((step: number) => void) | null = null
+  onSongEnd: (() => void) | null = null
 
   private ctx: AudioContext | null = null
   private studioMaster: GainNode | null = null
-  private tracks: Record<StudioTrackId, TrackBus> | null = null
-  private readonly trackStates: Record<StudioTrackId, MixerTrack> = {
-    drums: { volume: 1, mute: false },
-    chops: { volume: 1, mute: false },
-    synth: { volume: 1, mute: false }
-  }
+  private drumBus: TrackBus | null = null
+  private chopBus: TrackBus | null = null
+  private readonly synthBuses = new Map<string, TrackBus>()
+  private readonly trackStates = new Map<string, MixerTrack>([
+    [DRUM_TRACK, { volume: 1, mute: false }],
+    [CHOP_TRACK, { volume: 1, mute: false }]
+  ])
 
   private reverbInput: GainNode | null = null
   private delayInput: GainNode | null = null
   private delayLeft: DelayNode | null = null
   private delayRight: DelayNode | null = null
 
-  private synthDrive: WaveShaperNode | null = null
-  private synthMakeup: GainNode | null = null
-  private synthVolume: GainNode | null = null
-  private synthReverb: GainNode | null = null
-  private synthDelay: GainNode | null = null
-  private lfo: OscillatorNode | null = null
-  private lfoPitch: GainNode | null = null
-  private lfoFilter: GainNode | null = null
+  private readonly synths = new Map<string, SynthInstrument>()
   private noiseBuffer: AudioBuffer | null = null
+  private crusherLoaded = false
   private readonly driveCurves = new Map<number, Float32Array<ArrayBuffer>>()
 
-  private patch: SynthPatch = structuredClone(INITIAL_PATCH)
+  private readonly patches = new Map<string, SynthPatch>()
   private kit: DrumKit = structuredClone(DEFAULT_KIT)
-  private synthVoices: SynthVoice[] = []
-  private monoVoice: SynthVoice | null = null
-  private sequencerMonoVoice: SynthVoice | null = null
-  private sequencerMonoEnd = 0
-  private liveNoteStack: Array<{ midi: number; velocity: number }> = []
 
   private chopBuffer: AudioBuffer | null = null
   private chopSettings: ChopSettings = { ...DEFAULT_CHOPS }
@@ -191,7 +142,11 @@ export class StudioEngine implements StudioEngineApi {
   private openHat: ActiveOpenHat | null = null
   private active808: ActiveOpenHat | null = null
 
-  private pattern: Pattern | null = null
+  private project: EngineProject | null = null
+  private mode: PlayMode = 'loop'
+  private cycle: CycleRange | null = null
+  private songStart = 0
+  private songPlaybackStart = 0
   private bpm = 120
   private swing = 0
   private metronome = false
@@ -201,6 +156,7 @@ export class StudioEngine implements StudioEngineApi {
   private nextStepTime = 0
   private readonly scheduledSteps: Array<{ step: number; time: number; duration: number }> = []
   private readonly stepTimeouts = new Set<ReturnType<typeof setTimeout>>()
+  private songEndTimeout: ReturnType<typeof setTimeout> | null = null
 
   get ready(): boolean {
     return this.ctx !== null
@@ -218,15 +174,6 @@ export class StudioEngine implements StudioEngineApi {
     this.studioMaster = ctx.createGain()
     this.studioMaster.gain.value = 0.85
     this.studioMaster.connect(destination)
-
-    const makeTrack = (): TrackBus => {
-      const dry = ctx.createGain()
-      const reverb = ctx.createGain()
-      const delay = ctx.createGain()
-      dry.connect(this.studioMaster!)
-      return { dry, reverb, delay }
-    }
-    this.tracks = { drums: makeTrack(), chops: makeTrack(), synth: makeTrack() }
 
     this.reverbInput = ctx.createGain()
     const convolver = ctx.createConvolver()
@@ -262,368 +209,103 @@ export class StudioEngine implements StudioEngineApi {
     this.delayRight.connect(feedbackLowpassRight).connect(feedbackRight).connect(this.delayLeft)
     delayReturn.connect(this.studioMaster)
 
-    for (const track of Object.values(this.tracks)) {
-      track.reverb.connect(this.reverbInput)
-      track.delay.connect(this.delayInput)
-    }
+    this.drumBus = this.createTrackBus()
+    this.chopBus = this.createTrackBus()
+    this.applyTrack(DRUM_TRACK, this.trackStates.get(DRUM_TRACK)!)
+    this.applyTrack(CHOP_TRACK, this.trackStates.get(CHOP_TRACK)!)
+    this.reconcileSynths()
 
-    this.synthDrive = ctx.createWaveShaper()
-    this.synthDrive.oversample = '2x'
-    this.synthMakeup = ctx.createGain()
-    this.synthVolume = ctx.createGain()
-    this.synthReverb = ctx.createGain()
-    this.synthDelay = ctx.createGain()
-    this.synthDrive.connect(this.synthMakeup).connect(this.synthVolume)
-    this.synthVolume.connect(this.tracks.synth.dry)
-    this.synthVolume.connect(this.synthReverb).connect(this.tracks.synth.reverb)
-    this.synthVolume.connect(this.synthDelay).connect(this.tracks.synth.delay)
-
-    this.lfo = ctx.createOscillator()
-    this.lfoPitch = ctx.createGain()
-    this.lfoFilter = ctx.createGain()
-    this.lfo.connect(this.lfoPitch)
-    this.lfo.connect(this.lfoFilter)
-    this.lfo.start()
+    void ctx.audioWorklet.addModule('worklets/crush-processor.js').then(
+      () => {
+        this.crusherLoaded = true
+        for (const synth of this.synths.values()) synth.enableCrusher()
+      },
+      (error: unknown) => console.warn('Unable to load synth bitcrusher worklet', error)
+    )
 
     this.retuneDelay(ctx.currentTime)
-    for (const id of ['drums', 'chops', 'synth'] as StudioTrackId[]) {
-      this.applyTrack(id, this.trackStates[id])
-    }
-    this.applyPatchGlobals()
   }
 
-  setPatch(patch: SynthPatch): void {
-    const modeChanged = patch.mono !== this.patch.mono
-    if (modeChanged) this.allNotesOff()
-    this.patch = structuredClone(patch)
-    this.applyPatchGlobals()
-  }
-
-  private applyPatchGlobals(): void {
-    if (!this.ctx) return
-    const now = this.ctx.currentTime
-    if (this.synthDrive) this.synthDrive.curve = this.patch.drive < 0.01 ? null : this.getDriveCurve(this.patch.drive)
-    this.synthMakeup?.gain.setTargetAtTime(1 / (1 + this.patch.drive * 0.7), now, 0.02)
-    this.synthVolume?.gain.setTargetAtTime(clamp(this.patch.volume, 0, 1), now, 0.02)
-    this.synthReverb?.gain.setTargetAtTime(clamp(this.patch.reverb, 0, 1), now, 0.04)
-    this.synthDelay?.gain.setTargetAtTime(clamp(this.patch.delay, 0, 1), now, 0.04)
-    this.lfo?.frequency.setTargetAtTime(clamp(this.patch.lfo.rate, 0.05, 20), now, 0.03)
-    this.lfoPitch?.gain.setTargetAtTime(clamp(this.patch.lfo.pitch, 0, 100), now, 0.03)
-    this.lfoFilter?.gain.setTargetAtTime(clamp(this.patch.lfo.filter, 0, 4) * 1200, now, 0.03)
-  }
-
-  noteOn(midi: number, velocity = 1, when?: number): void {
-    if (!this.ctx) return
-    const time = Math.max(when ?? this.ctx.currentTime, this.ctx.currentTime)
-    const note = clamp(midi, 0, 127)
-    const level = clamp(velocity, 0, 1)
-    if (this.patch.mono) {
-      this.liveNoteStack.push({ midi: note, velocity: level })
-      if (this.monoVoice && !this.monoVoice.cleaned && !this.monoVoice.releasing) {
-        this.monoVoice.midi = note
-        this.monoVoice.velocity = level
-        holdAt(this.monoVoice.amp.gain, time)
-        this.monoVoice.amp.gain.setTargetAtTime(
-          Math.max(EPSILON, level * clamp(this.patch.ampEnv.sustain, 0, 1)),
-          time,
-          0.01
-        )
-        this.setVoicePitch(this.monoVoice, note, time, this.patch.glide, true)
-      } else {
-        this.monoVoice = this.createVoice(note, level, time, true)
-      }
-      return
-    }
-    this.createVoice(note, level, time, true)
-  }
-
-  noteOff(midi: number, when?: number): void {
-    if (!this.ctx) return
-    const time = Math.max(when ?? this.ctx.currentTime, this.ctx.currentTime)
-    if (this.patch.mono) {
-      this.liveNoteStack = this.liveNoteStack.filter((note) => note.midi !== midi)
-      const fallback = this.liveNoteStack.at(-1)
-      if (fallback && this.monoVoice && !this.monoVoice.cleaned) {
-        this.monoVoice.midi = fallback.midi
-        this.monoVoice.velocity = fallback.velocity
-        holdAt(this.monoVoice.amp.gain, time)
-        this.monoVoice.amp.gain.setTargetAtTime(
-          Math.max(EPSILON, fallback.velocity * clamp(this.patch.ampEnv.sustain, 0, 1)),
-          time,
-          0.01
-        )
-        this.setVoicePitch(this.monoVoice, fallback.midi, time, this.patch.glide, true)
-      } else if (this.monoVoice) {
-        this.releaseVoice(this.monoVoice, time, this.patch.ampEnv.release)
-        this.monoVoice = null
-      }
-      return
-    }
-    for (const voice of this.synthVoices) {
-      if (voice.live && voice.midi === midi) this.releaseVoice(voice, time, this.patch.ampEnv.release)
-    }
-  }
-
-  playNote(midi: number, velocity: number, when: number, duration: number): void {
-    if (!this.ctx) return
-    const time = Math.max(when, this.ctx.currentTime)
-    const end = time + Math.max(0.005, Number.isFinite(duration) ? duration : 0.005)
-    if (this.patch.mono) {
-      const isLegato =
-        this.sequencerMonoVoice &&
-        !this.sequencerMonoVoice.cleaned &&
-        time <= this.sequencerMonoEnd + 0.03
-      if (isLegato && this.sequencerMonoVoice) {
-        const voice = this.sequencerMonoVoice
-        const holdTime = Math.max(this.ctx.currentTime, Math.min(time, this.sequencerMonoEnd))
-        voice.releasing = false
-        voice.midi = clamp(midi, 0, 127)
-        voice.velocity = clamp(velocity, 0, 1)
-        holdAt(voice.amp.gain, holdTime)
-        voice.amp.gain.setTargetAtTime(
-          Math.max(EPSILON, voice.velocity * clamp(this.patch.ampEnv.sustain, 0, 1)),
-          holdTime,
-          0.01
-        )
-        this.setVoicePitch(voice, voice.midi, time, this.patch.glide, true, holdTime)
-        this.sequencerMonoEnd = Math.max(this.sequencerMonoEnd, end)
-        this.releaseVoice(voice, this.sequencerMonoEnd, this.patch.ampEnv.release)
-      } else {
-        const voice = this.createVoice(clamp(midi, 0, 127), clamp(velocity, 0, 1), time, false)
-        this.sequencerMonoVoice = voice
-        this.sequencerMonoEnd = end
-        if (voice) this.releaseVoice(voice, end, this.patch.ampEnv.release)
-      }
-      return
-    }
-    const voice = this.createVoice(clamp(midi, 0, 127), clamp(velocity, 0, 1), time, false)
-    if (voice) this.releaseVoice(voice, end, this.patch.ampEnv.release)
-  }
-
-  allNotesOff(): void {
-    if (!this.ctx) {
-      this.liveNoteStack = []
-      return
-    }
-    const now = this.ctx.currentTime
-    this.liveNoteStack = []
-    for (const voice of [...this.synthVoices]) this.releaseVoice(voice, now, 0.03, true)
-    this.monoVoice = null
-    this.sequencerMonoVoice = null
-    this.sequencerMonoEnd = 0
-  }
-
-  private createVoice(midi: number, velocity: number, when: number, live: boolean): SynthVoice | null {
-    if (!this.ctx || !this.synthDrive || !this.noiseBuffer || !this.lfoPitch || !this.lfoFilter) return null
+  private createTrackBus(): TrackBus {
     const ctx = this.ctx
-    const time = Math.max(when, ctx.currentTime)
-    const active = this.synthVoices.filter((voice) => !voice.cleaned && !voice.stolen)
-    if (active.length >= MAX_SYNTH_VOICES) {
-      const oldest = active.reduce((a, b) => (a.startedAt <= b.startedAt ? a : b))
-      oldest.stolen = true
-      this.releaseVoice(oldest, time, 0.025, true)
+    if (!ctx || !this.studioMaster || !this.reverbInput || !this.delayInput) {
+      throw new Error('Studio audio graph is not initialized')
     }
-
-    const filter = ctx.createBiquadFilter()
-    filter.type = this.patch.filter.type
-    filter.Q.value = clamp(this.patch.filter.resonance, 0.1, 20)
-    const nyquist = ctx.sampleRate * 0.48
-    const keyFactor = 2 ** (((midi - 60) / 12) * clamp(this.patch.filter.keyTrack, 0, 1))
-    const filterBase = clamp(this.patch.filter.cutoff * keyFactor, 20, nyquist)
-    const amp = ctx.createGain()
-    amp.gain.value = EPSILON
-    const voiceOut = ctx.createGain()
-    voiceOut.gain.value = 0.3
-    amp.connect(voiceOut).connect(this.synthDrive)
-
-    const voice: SynthVoice = {
-      midi,
-      velocity,
-      startedAt: time,
-      live,
-      releasing: false,
-      stolen: false,
-      cleaned: false,
-      amp,
-      filter,
-      filterBase,
-      sources: [],
-      oscillators: [],
-      nodes: [filter, amp, voiceOut],
-      pitches: []
-    }
-
-    const unison = Math.round(clamp(this.patch.unison, 1, 7))
-    const normalization = 1 / Math.sqrt(unison)
-    const addOscillatorStack = (
-      wave: OscillatorType,
-      level: number,
-      octave: number,
-      detune: number
-    ): void => {
-      if (level <= 0) return
-      for (let i = 0; i < unison; i++) {
-        const position = unison === 1 ? 0 : i / (unison - 1) - 0.5
-        const oscillator = ctx.createOscillator()
-        oscillator.type = wave
-        oscillator.detune.value = detune + position * 2 * clamp(this.patch.spread, 0, 50)
-        const gain = ctx.createGain()
-        gain.gain.value = level * normalization
-        oscillator.connect(gain).connect(filter)
-        this.lfoPitch!.connect(oscillator.detune)
-        voice.sources.push(oscillator)
-        voice.oscillators.push(oscillator)
-        voice.nodes.push(oscillator, gain)
-        voice.pitches.push({ param: oscillator.frequency, ratio: 2 ** octave })
-        oscillator.start(time)
-      }
-    }
-
-    addOscillatorStack(this.patch.osc1.wave, clamp(this.patch.osc1.level, 0, 1), 0, 0)
-    addOscillatorStack(
-      this.patch.osc2.wave,
-      clamp(this.patch.osc2.level, 0, 1),
-      clamp(this.patch.osc2.octave, -2, 2),
-      clamp(this.patch.osc2.detune, -50, 50)
-    )
-    if (this.patch.sub > 0) {
-      const sub = ctx.createOscillator()
-      sub.type = 'sine'
-      const subGain = ctx.createGain()
-      subGain.gain.value = clamp(this.patch.sub, 0, 1)
-      sub.connect(subGain).connect(filter)
-      this.lfoPitch.connect(sub.detune)
-      voice.sources.push(sub)
-      voice.oscillators.push(sub)
-      voice.nodes.push(sub, subGain)
-      voice.pitches.push({ param: sub.frequency, ratio: 0.5 })
-      sub.start(time)
-    }
-    if (this.patch.noise > 0) {
-      const noise = ctx.createBufferSource()
-      noise.buffer = this.noiseBuffer
-      noise.loop = true
-      const noiseGain = ctx.createGain()
-      noiseGain.gain.value = clamp(this.patch.noise, 0, 1) * 0.5
-      noise.connect(noiseGain).connect(filter)
-      voice.sources.push(noise)
-      voice.nodes.push(noise, noiseGain)
-      noise.start(time)
-    }
-
-    if (voice.sources.length === 0) {
-      voiceOut.disconnect()
-      return null
-    }
-    filter.connect(amp)
-    this.lfoFilter.connect(filter.detune)
-    this.setVoicePitch(voice, midi, time, 0, false)
-    this.scheduleVoiceAttack(voice, time)
-    voice.sources[0].onended = () => this.cleanupVoice(voice)
-    this.synthVoices.push(voice)
-    return voice
+    const dry = ctx.createGain()
+    const reverb = ctx.createGain()
+    const delay = ctx.createGain()
+    dry.connect(this.studioMaster)
+    reverb.connect(this.reverbInput)
+    delay.connect(this.delayInput)
+    return { dry, reverb, delay }
   }
 
-  private scheduleVoiceAttack(voice: SynthVoice, when: number): void {
-    const ampEnv = this.patch.ampEnv
-    const filterEnv = this.patch.filterEnv
-    const ampAttackEnd = when + Math.max(0.001, ampEnv.attack)
-    const ampDecayEnd = ampAttackEnd + Math.max(0.001, ampEnv.decay)
-    voice.amp.gain.setValueAtTime(EPSILON, when)
-    voice.amp.gain.linearRampToValueAtTime(voice.velocity, ampAttackEnd)
-    voice.amp.gain.exponentialRampToValueAtTime(
-      Math.max(EPSILON, voice.velocity * clamp(ampEnv.sustain, 0, 1)),
-      ampDecayEnd
-    )
-
-    const envVelocity = 0.7 + voice.velocity * 0.3
-    const peak = clamp(voice.filterBase * 2 ** (this.patch.filter.envAmount * envVelocity), 20, this.ctx!.sampleRate * 0.48)
-    const sustain = clamp(
-      voice.filterBase * 2 ** (this.patch.filter.envAmount * clamp(filterEnv.sustain, 0, 1) * envVelocity),
-      20,
-      this.ctx!.sampleRate * 0.48
-    )
-    const filterAttackEnd = when + Math.max(0.001, filterEnv.attack)
-    const filterDecayEnd = filterAttackEnd + Math.max(0.001, filterEnv.decay)
-    voice.filter.frequency.setValueAtTime(Math.max(20, voice.filterBase), when)
-    voice.filter.frequency.exponentialRampToValueAtTime(Math.max(20, peak), filterAttackEnd)
-    voice.filter.frequency.exponentialRampToValueAtTime(Math.max(20, sustain), filterDecayEnd)
-  }
-
-  private setVoicePitch(
-    voice: SynthVoice,
-    midi: number,
-    when: number,
-    glide: number,
-    updateFilter: boolean,
-    filterWhen = when
-  ): void {
-    const base = midiFrequency(midi)
-    for (const pitch of voice.pitches) {
-      const target = Math.max(1, base * pitch.ratio)
-      if (glide > 0) {
-        holdAt(pitch.param, when)
-        pitch.param.setTargetAtTime(target, when, Math.max(0.001, glide / 3))
-      } else {
-        pitch.param.setValueAtTime(target, when)
+  private reconcileSynths(): void {
+    if (!this.ctx || !this.noiseBuffer) return
+    const tracks = Array.isArray(this.project?.tracks) ? this.project.tracks : []
+    const desired = new Set<string>()
+    for (const track of tracks) {
+      if (track?.kind === 'synth' && typeof track.id === 'string') desired.add(track.id)
+    }
+    let unchanged = desired.size === this.synths.size
+    if (unchanged) {
+      for (const id of desired) {
+        if (!this.synths.has(id)) {
+          unchanged = false
+          break
+        }
       }
     }
-    if (this.ctx && updateFilter) {
-      const keyFactor = 2 ** (((midi - 60) / 12) * clamp(this.patch.filter.keyTrack, 0, 1))
-      voice.filterBase = clamp(this.patch.filter.cutoff * keyFactor, 20, this.ctx.sampleRate * 0.48)
-      const envVelocity = 0.7 + voice.velocity * 0.3
-      const target = clamp(
-        voice.filterBase *
-          2 ** (this.patch.filter.envAmount * clamp(this.patch.filterEnv.sustain, 0, 1) * envVelocity),
-        20,
-        this.ctx.sampleRate * 0.48
-      )
-      holdAt(voice.filter.frequency, filterWhen)
-      if (glide > 0) {
-        voice.filter.frequency.setTargetAtTime(target, filterWhen, Math.max(0.001, glide / 3))
-      } else {
-        voice.filter.frequency.setTargetAtTime(target, filterWhen, 0.005)
-      }
+    if (unchanged) return
+
+    for (const [id, synth] of this.synths) {
+      if (desired.has(id)) continue
+      synth.allNotesOff()
+      synth.dispose()
+      this.synths.delete(id)
+      const bus = this.synthBuses.get(id)
+      bus?.dry.disconnect()
+      bus?.reverb.disconnect()
+      bus?.delay.disconnect()
+      this.synthBuses.delete(id)
+    }
+    for (const id of desired) {
+      if (this.synths.has(id)) continue
+      const bus = this.createTrackBus()
+      const synth = new SynthInstrument(this.ctx, bus, this.noiseBuffer)
+      this.synthBuses.set(id, bus)
+      this.synths.set(id, synth)
+      synth.setPatch(this.patches.get(id) ?? DEFAULT_PATCH)
+      synth.setBpm(this.bpm)
+      this.applyTrack(id, this.trackStates.get(id) ?? { volume: 1, mute: false })
+      if (this.crusherLoaded) synth.enableCrusher()
     }
   }
 
-  private releaseVoice(voice: SynthVoice, when: number, release: number, force = false): void {
-    if (voice.cleaned || (voice.releasing && !force)) return
-    voice.releasing = true
-    const time = Math.max(when, this.ctx?.currentTime ?? when)
-    const end = time + Math.max(0.005, release)
-    holdAt(voice.amp.gain, time)
-    voice.amp.gain.exponentialRampToValueAtTime(EPSILON, end)
-    holdAt(voice.filter.frequency, time)
-    voice.filter.frequency.exponentialRampToValueAtTime(Math.max(20, voice.filterBase), end)
-    for (const source of voice.sources) {
-      try {
-        source.stop(end + 0.03)
-      } catch {
-        // Already ended.
-      }
-    }
+  setPatch(trackId: string, patch: SynthPatch): void {
+    const remembered = structuredClone(patch)
+    this.patches.set(trackId, remembered)
+    this.synths.get(trackId)?.setPatch(remembered)
   }
 
-  private cleanupVoice(voice: SynthVoice): void {
-    if (voice.cleaned) return
-    voice.cleaned = true
-    for (const oscillator of voice.oscillators) {
-      try {
-        this.lfoPitch?.disconnect(oscillator.detune)
-      } catch {
-        // Already disconnected.
-      }
+  noteOn(trackId: string, midi: number, velocity = 1, when?: number): void {
+    this.synths.get(trackId)?.noteOn(midi, velocity, when)
+  }
+
+  noteOff(trackId: string, midi: number, when?: number): void {
+    this.synths.get(trackId)?.noteOff(midi, when)
+  }
+
+  playNote(trackId: string, midi: number, velocity: number, when: number, duration: number): void {
+    this.synths.get(trackId)?.playNote(midi, velocity, when, duration)
+  }
+
+  allNotesOff(trackId?: string): void {
+    if (trackId !== undefined) {
+      this.synths.get(trackId)?.allNotesOff()
+      return
     }
-    try {
-      this.lfoFilter?.disconnect(voice.filter.detune)
-    } catch {
-      // Already disconnected.
-    }
-    for (const node of voice.nodes) node.disconnect()
-    this.synthVoices = this.synthVoices.filter((candidate) => candidate !== voice)
-    if (this.monoVoice === voice) this.monoVoice = null
-    if (this.sequencerMonoVoice === voice) this.sequencerMonoVoice = null
+    for (const synth of this.synths.values()) synth.allNotesOff()
   }
 
   setKit(kit: DrumKit): void {
@@ -631,7 +313,7 @@ export class StudioEngine implements StudioEngineApi {
   }
 
   triggerDrum(id: DrumVoiceId, velocity = 1, when?: number): void {
-    if (!this.ctx || !this.tracks || !this.noiseBuffer) return
+    if (!this.ctx || !this.drumBus || !this.noiseBuffer) return
     const ctx = this.ctx
     const time = Math.max(when ?? ctx.currentTime, ctx.currentTime)
     const voice = this.kit.voices[id] ?? DEFAULT_DRUM
@@ -824,7 +506,7 @@ export class StudioEngine implements StudioEngineApi {
   }
 
   private connectDrumOutput(input: AudioNode, output: GainNode, voice: DrumVoice, nodes: AudioNode[]): void {
-    if (!this.tracks || !this.ctx) return
+    if (!this.drumBus || !this.ctx) return
     let tail: AudioNode = input
     if (voice.drive >= 0.01) {
       const shaper = this.ctx.createWaveShaper()
@@ -835,10 +517,10 @@ export class StudioEngine implements StudioEngineApi {
       nodes.push(shaper)
     }
     tail.connect(output)
-    output.connect(this.tracks.drums.dry)
+    output.connect(this.drumBus.dry)
     const send = this.ctx.createGain()
     send.gain.value = clamp(voice.reverb, 0, 1)
-    output.connect(send).connect(this.tracks.drums.reverb)
+    output.connect(send).connect(this.drumBus.reverb)
     nodes.push(send)
   }
 
@@ -912,7 +594,7 @@ export class StudioEngine implements StudioEngineApi {
   }
 
   triggerChop(pad: number, velocity = 1, when?: number): void {
-    if (!this.ctx || !this.tracks || !this.chopBuffer) return
+    if (!this.ctx || !this.chopBus || !this.chopBuffer) return
     const region = this.chopRegion(pad)
     if (!region) return
     const ctx = this.ctx
@@ -927,8 +609,8 @@ export class StudioEngine implements StudioEngineApi {
     const send = ctx.createGain()
     send.gain.value = clamp(this.chopSettings.reverb, 0, 1)
     source.connect(gain)
-    gain.connect(this.tracks.chops.dry)
-    gain.connect(send).connect(this.tracks.chops.reverb)
+    gain.connect(this.chopBus.dry)
+    gain.connect(send).connect(this.chopBus.reverb)
     const realDuration = (region.end - region.start) / playbackRate
     const fade = Math.min(Math.max(0.001, this.chopSettings.fade), realDuration / 2)
     const level = Math.max(EPSILON, clamp(velocity, 0, 1))
@@ -965,28 +647,58 @@ export class StudioEngine implements StudioEngineApi {
     }
   }
 
-  setTrack(track: StudioTrackId, state: MixerTrack): void {
-    this.trackStates[track] = { volume: clamp(state.volume, 0, 1), mute: state.mute }
-    this.applyTrack(track, this.trackStates[track])
+  setTrack(trackId: string, state: MixerTrack): void {
+    const remembered = { volume: clamp(state.volume, 0, 1), mute: state.mute }
+    this.trackStates.set(trackId, remembered)
+    this.applyTrack(trackId, remembered)
   }
 
-  private applyTrack(track: StudioTrackId, state: MixerTrack): void {
-    if (!this.ctx || !this.tracks) return
+  private applyTrack(trackId: string, state: MixerTrack): void {
+    if (!this.ctx) return
     const gain = state.mute ? 0 : clamp(state.volume, 0, 1)
     const time = this.ctx.currentTime
-    this.tracks[track].dry.gain.setTargetAtTime(gain, time, 0.015)
-    this.tracks[track].reverb.gain.setTargetAtTime(gain, time, 0.015)
-    this.tracks[track].delay.gain.setTargetAtTime(gain, time, 0.015)
+    const buses: TrackBus[] = []
+    if (trackId === DRUM_TRACK && this.drumBus) buses.push(this.drumBus)
+    if (trackId === CHOP_TRACK && this.chopBus) buses.push(this.chopBus)
+    const synthBus = this.synthBuses.get(trackId)
+    if (synthBus) buses.push(synthBus)
+    for (const bus of buses) {
+      bus.dry.gain.setTargetAtTime(gain, time, 0.015)
+      bus.reverb.gain.setTargetAtTime(gain, time, 0.015)
+      bus.delay.gain.setTargetAtTime(gain, time, 0.015)
+    }
   }
 
-  setPattern(pattern: Pattern): void {
-    this.pattern = pattern
-    const length = pattern.bars * STEPS_PER_BAR
-    if (this.nextStep >= length) this.nextStep %= length
+  setProject(project: EngineProject): void {
+    this.project = project
+    this.reconcileSynths()
+  }
+
+  setMode(mode: PlayMode): void {
+    if (this.playingFlag) this.stop()
+    this.mode = mode
+  }
+
+  setCycle(cycle: CycleRange | null): void {
+    this.cycle = cycle
+  }
+
+  seek(step: number): void {
+    this.songStart = Number.isFinite(step) ? Math.max(0, Math.floor(step)) : 0
+    if (!this.ctx || !this.playingFlag || this.mode !== 'song') return
+    this.allNotesOff()
+    this.stopChops()
+    this.clearStepTimeouts()
+    this.scheduledSteps.length = 0
+    this.nextStep = this.songStart
+    this.songPlaybackStart = this.songStart
+    this.nextStepTime = this.ctx.currentTime + 0.05
+    this.schedulerTick()
   }
 
   setBpm(bpm: number): void {
     this.bpm = clamp(bpm, 20, 300)
+    for (const synth of this.synths.values()) synth.setBpm(this.bpm)
     if (this.ctx) this.retuneDelay(this.ctx.currentTime)
   }
 
@@ -1002,7 +714,8 @@ export class StudioEngine implements StudioEngineApi {
     if (!this.ctx || this.playingFlag) return
     void this.ctx.resume()
     this.playingFlag = true
-    this.nextStep = 0
+    this.nextStep = this.mode === 'loop' ? 0 : this.songStart
+    this.songPlaybackStart = this.nextStep
     this.nextStepTime = this.ctx.currentTime + 0.05
     this.scheduledSteps.length = 0
     this.schedulerTick()
@@ -1012,12 +725,18 @@ export class StudioEngine implements StudioEngineApi {
   stop(): void {
     if (this.schedulerTimer !== null) clearInterval(this.schedulerTimer)
     this.schedulerTimer = null
-    for (const timeout of this.stepTimeouts) clearTimeout(timeout)
-    this.stepTimeouts.clear()
+    this.clearStepTimeouts()
     this.playingFlag = false
     this.scheduledSteps.length = 0
     this.stopChops()
     this.allNotesOff()
+    for (const synth of this.synths.values()) synth.resetPump()
+  }
+
+  private clearStepTimeouts(): void {
+    for (const timeout of this.stepTimeouts) clearTimeout(timeout)
+    this.stepTimeouts.clear()
+    this.songEndTimeout = null
   }
 
   getStepPosition(): number {
@@ -1031,45 +750,75 @@ export class StudioEngine implements StudioEngineApi {
       if (scheduled.time <= now) audible = scheduled
       else break
     }
-    if (!audible) return this.scheduledSteps[0]?.step ?? 0
+    if (!audible) return this.scheduledSteps[0]?.step ?? this.nextStep
     const fraction = clamp((now - audible.time) / audible.duration, 0, 0.9999)
-    const length = (this.pattern?.bars ?? 1) * STEPS_PER_BAR
-    return (audible.step + fraction) % length
+    const position = audible.step + fraction
+    return this.mode === 'loop' ? position % LOOP_STEPS : position
   }
 
   private schedulerTick(): void {
-    if (!this.ctx || !this.playingFlag) return
+    if (!this.ctx || !this.playingFlag || this.songEndTimeout !== null) return
     if (this.nextStepTime < this.ctx.currentTime - 0.1) {
       this.nextStepTime = this.ctx.currentTime + 0.01
     }
     while (this.nextStepTime < this.ctx.currentTime + SCHEDULE_AHEAD) {
       const stepDuration = 60 / this.bpm / 4
-      const length = (this.pattern?.bars ?? 1) * STEPS_PER_BAR
-      if (this.nextStep >= length) this.nextStep %= length
-      const audibleTime = this.nextStepTime + (this.nextStep % 2 === 1 ? this.swing * stepDuration : 0)
-      this.scheduleStep(this.nextStep, audibleTime, stepDuration)
-      this.nextStep = (this.nextStep + 1) % length
+      let step = this.nextStep
+      if (this.mode === 'loop') {
+        step = ((step % LOOP_STEPS) + LOOP_STEPS) % LOOP_STEPS
+      } else {
+        const cycle = this.validCycle()
+        if (cycle && step >= cycle.end) step = cycle.start
+        const audibleTime = this.nextStepTime + (step % 2 === 1 ? this.swing * stepDuration : 0)
+        const songEnd = this.getSongEnd()
+        if (!cycle && step >= songEnd && this.songPlaybackStart < songEnd) {
+          this.scheduleSongEnd(audibleTime)
+          return
+        }
+      }
+      const audibleTime = this.nextStepTime + (step % 2 === 1 ? this.swing * stepDuration : 0)
+      this.scheduleStep(step, audibleTime, stepDuration)
+      this.nextStep = this.mode === 'loop' ? (step + 1) % LOOP_STEPS : step + 1
       this.nextStepTime += stepDuration
     }
   }
 
-  private scheduleStep(step: number, when: number, stepDuration: number): void {
-    const pattern = this.pattern
-    if (pattern) {
-      for (const id of DRUM_VOICES) {
-        const velocity = pattern.drums[id][step] ?? 0
-        if (velocity > 0) this.triggerDrum(id, velocity, when)
-      }
-      for (let pad = 0; pad < pattern.chops.length; pad++) {
-        const velocity = pattern.chops[pad]?.[step] ?? 0
-        if (velocity > 0) this.triggerChop(pad, velocity, when)
-      }
-      for (const note of pattern.notes) {
-        if (note.step === step) {
-          this.playNote(note.note, note.velocity, when, Math.max(1, note.length) * stepDuration * 0.98)
-        }
-      }
+  private validCycle(): CycleRange | null {
+    const cycle = this.cycle
+    return cycle && Number.isFinite(cycle.start) && Number.isFinite(cycle.end) && cycle.end > cycle.start
+      ? cycle
+      : null
+  }
+
+  private getSongEnd(): number {
+    const clips = Array.isArray(this.project?.clips) ? this.project.clips : []
+    let end = 0
+    for (const clip of clips) {
+      if (!Number.isFinite(clip?.start) || !Number.isFinite(clip?.length)) continue
+      end = Math.max(end, clip.start + clip.length)
     }
+    return end
+  }
+
+  private scheduleSongEnd(when: number): void {
+    const delay = Math.max(0, (when - (this.ctx?.currentTime ?? when)) * 1000)
+    const timeout = setTimeout(() => {
+      this.stepTimeouts.delete(timeout)
+      if (this.songEndTimeout !== timeout || !this.playingFlag || this.mode !== 'song') return
+      this.songEndTimeout = null
+      this.stop()
+      this.onSongEnd?.()
+    }, delay)
+    this.songEndTimeout = timeout
+    this.stepTimeouts.add(timeout)
+  }
+
+  private scheduleStep(step: number, when: number, stepDuration: number): void {
+    if (step % 4 === 0) {
+      for (const synth of this.synths.values()) synth.pump(when, 60 / this.bpm)
+    }
+    if (this.mode === 'loop') this.scheduleLoopPatterns(step, when, stepDuration)
+    else this.scheduleSongClips(step, when, stepDuration)
     if (this.metronome && step % 4 === 0) this.scheduleMetronome(step, when)
     this.scheduledSteps.push({ step, time: when, duration: stepDuration })
     while (this.scheduledSteps.length > 16) this.scheduledSteps.shift()
@@ -1079,6 +828,92 @@ export class StudioEngine implements StudioEngineApi {
       if (this.playingFlag) this.onStep?.(step)
     }, delay)
     this.stepTimeouts.add(timeout)
+  }
+
+  private scheduleLoopPatterns(step: number, when: number, stepDuration: number): void {
+    const project = this.project
+    const tracks = Array.isArray(project?.tracks) ? project.tracks : []
+    for (const track of tracks) {
+      if (!track) continue
+      const pattern = project?.patterns?.[track.patternId]
+      if (!pattern || pattern.kind !== track.kind) continue
+      const length = this.patternLength(pattern)
+      if (length === 0) continue
+      this.firePattern(track, pattern, step % length, when, stepDuration)
+    }
+  }
+
+  private scheduleSongClips(step: number, when: number, stepDuration: number): void {
+    const project = this.project
+    const tracks = Array.isArray(project?.tracks) ? project.tracks : []
+    const clips = Array.isArray(project?.clips) ? project.clips : []
+    for (const clip of clips) {
+      if (
+        !Number.isFinite(clip?.start) ||
+        !Number.isFinite(clip?.length) ||
+        !Number.isFinite(clip?.offset) ||
+        clip.length <= 0 ||
+        step < clip.start ||
+        step >= clip.start + clip.length
+      ) {
+        continue
+      }
+      const track = tracks.find((candidate) => candidate?.id === clip.trackId)
+      const pattern = project?.patterns?.[clip.patternId]
+      if (!track || !pattern || pattern.kind !== track.kind) continue
+      const length = this.patternLength(pattern)
+      if (length === 0) continue
+      const local = ((step - clip.start + clip.offset) % length + length) % length
+      const remaining = clip.start + clip.length - step
+      this.firePattern(track, pattern, local, when, stepDuration, remaining)
+    }
+  }
+
+  private patternLength(pattern: Pattern): number {
+    const length = pattern.bars * STEPS_PER_BAR
+    return Number.isFinite(length) && length > 0 ? Math.floor(length) : 0
+  }
+
+  private firePattern(
+    track: EngineTrack,
+    pattern: Pattern,
+    local: number,
+    when: number,
+    stepDuration: number,
+    remainingClipSteps?: number
+  ): void {
+    if (pattern.kind === 'drums') {
+      for (const id of DRUM_VOICES) {
+        const steps = pattern.drums?.[id]
+        const velocity = Array.isArray(steps) ? steps[local] : 0
+        if (Number.isFinite(velocity) && velocity > 0) this.triggerDrum(id, velocity, when)
+      }
+      return
+    }
+    if (pattern.kind === 'chops') {
+      const pads = Array.isArray(pattern.chops) ? pattern.chops : []
+      for (let pad = 0; pad < pads.length; pad++) {
+        const velocity = Array.isArray(pads[pad]) ? pads[pad][local] : 0
+        if (Number.isFinite(velocity) && velocity > 0) this.triggerChop(pad, velocity, when)
+      }
+      return
+    }
+    const notes = Array.isArray(pattern.notes) ? pattern.notes : []
+    for (const note of notes) {
+      if (
+        !Number.isFinite(note?.step) ||
+        !Number.isFinite(note?.note) ||
+        !Number.isFinite(note?.length) ||
+        !Number.isFinite(note?.velocity) ||
+        note.step !== local
+      ) {
+        continue
+      }
+      const noteSteps = remainingClipSteps === undefined
+        ? Math.max(1, note.length)
+        : Math.min(Math.max(1, note.length), remainingClipSteps)
+      this.playNote(track.id, note.note, note.velocity, when, noteSteps * stepDuration * 0.98)
+    }
   }
 
   private scheduleMetronome(step: number, when: number): void {
