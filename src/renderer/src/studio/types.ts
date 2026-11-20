@@ -5,6 +5,23 @@
 
 export type Wave = 'sine' | 'triangle' | 'sawtooth' | 'square'
 
+/** Character of the DRIVE stage. */
+export type DistortionType = 'soft' | 'hard' | 'fold' | 'fuzz'
+
+export type LfoShape = 'sine' | 'triangle' | 'sawtooth' | 'square' | 'random'
+
+/** Tempo-synced LFO lengths; `beats` is quarter notes per LFO cycle. */
+export const LFO_DIVISIONS = [
+  { label: '2 BAR', beats: 8 },
+  { label: '1 BAR', beats: 4 },
+  { label: '1/2', beats: 2 },
+  { label: '1/4', beats: 1 },
+  { label: '1/8', beats: 0.5 },
+  { label: '1/8T', beats: 1 / 3 },
+  { label: '1/16', beats: 0.25 },
+  { label: '1/32', beats: 0.125 }
+] as const
+
 export interface Envelope {
   /** Seconds. */
   attack: number
@@ -20,9 +37,15 @@ export interface SynthPatch {
   name: string
   /** Short description shown in the preset tooltip. */
   description: string
+  /** Preset-menu section for factory sounds. */
+  group?: string
   osc1: { wave: Wave; level: number }
-  /** octave -2..2, detune in cents -50..50 */
-  osc2: { wave: Wave; level: number; octave: number; detune: number }
+  /** octave -2..2, semi -12..12 semitones, detune in cents -50..50 */
+  osc2: { wave: Wave; level: number; octave: number; semi: number; detune: number }
+  /** FM: how hard osc 2 modulates osc 1's pitch at audio rate, 0..1 (metallic → screaming). */
+  fm: number
+  /** Ring-mod: level of osc1 × osc2, 0..1 (clangorous, robotic). */
+  ring: number
   /** Sine one octave below osc1, 0..1. */
   sub: number
   /** White noise level 0..1. */
@@ -33,31 +56,53 @@ export interface SynthPatch {
   spread: number
   filter: {
     type: 'lowpass' | 'highpass' | 'bandpass'
+    /** dB/octave: 12 = one stage, 24 = two cascaded stages (acid / Moog-style). */
+    slope: 12 | 24
     /** Hz, 40..18000 */
     cutoff: number
-    /** Biquad Q, 0.1..20 */
+    /** Biquad Q, 0.1..30 */
     resonance: number
     /** How far the filter envelope opens the cutoff, in octaves, -4..6. */
     envAmount: number
     /** 0..1: how much the cutoff follows the played note (1 = fully). */
     keyTrack: number
+    /** Overdrive into the filter, 0..1 — makes resonance growl instead of whistle. */
+    drive: number
+    /** Osc 2 wobbling the cutoff at audio rate, 0..1 (vocal growls, screams). */
+    fm: number
   }
   ampEnv: Envelope
   filterEnv: Envelope
+  /** Pitch sweep at the start of every note: `amount` semitones (-48..48) falling to 0 over `decay` seconds. */
+  pitchEnv: { amount: number; decay: number }
   lfo: {
-    /** Hz 0.05..20 */
+    shape: LfoShape
+    /** Free-running speed in Hz, 0.05..100 (ignored while `sync` is on). */
     rate: number
-    /** Vibrato depth in cents 0..100 */
+    /** Lock the LFO to the project tempo using `division`. */
+    sync: boolean
+    /** Index into LFO_DIVISIONS. */
+    division: number
+    /** Vibrato depth in cents 0..2400 */
     pitch: number
-    /** Filter wobble depth in octaves 0..4 */
+    /** Filter wobble depth in octaves 0..5 */
     filter: number
+    /** Tremolo / gate depth 0..1 */
+    amp: number
   }
   /** Portamento time in seconds 0..1 (mono mode slides between notes). */
   glide: number
   /** One note at a time (needed for sliding 808s / leads). */
   mono: boolean
-  /** Waveshaper saturation 0..1. */
+  /** Distortion amount 0..1. */
   drive: number
+  driveType: DistortionType
+  /** Bitcrusher: `bits` 0..1 = bit-depth reduction, `rate` 0..1 = sample-rate reduction. */
+  crush: { bits: number; rate: number }
+  /** Phaser: `mix` 0..1, sweep `rate` in Hz 0.05..8. */
+  phaser: { mix: number; rate: number }
+  /** Sidechain-style ducking on every beat while the transport runs, 0..1. */
+  pump: number
   /** Send to the studio reverb 0..1. */
   reverb: number
   /** Send to the tempo-synced delay 0..1. */
@@ -87,6 +132,8 @@ export interface DrumVoice {
 export interface DrumKit {
   name: string
   description: string
+  /** Preset-menu section for factory kits. */
+  group?: string
   voices: Record<DrumVoiceId, DrumVoice>
 }
 

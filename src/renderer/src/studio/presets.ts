@@ -8,8 +8,16 @@ import {
   type Pattern,
   type SynthPatch
 } from './types'
+import { normalizePatch } from './patch'
 
-export const SYNTH_PRESETS: SynthPatch[] = [
+type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] }
+/** A preset only spells out what differs from the neutral init patch. */
+type PatchSeed = DeepPartial<SynthPatch> & Pick<SynthPatch, 'name' | 'description'>
+
+export const DONDA_GROUP = 'Donda-inspired'
+export const ROBOT_GROUP = 'Robots & warehouse'
+
+const DONDA_SEEDS: PatchSeed[] = [
   {
     name: 'Donda Organ',
     description: 'A wide gospel pipe organ built from sine drawbars, a quiet square octave, sub weight, Leslie-like vibrato, and a large hall.',
@@ -169,27 +177,221 @@ export const SYNTH_PRESETS: SynthPatch[] = [
     reverb: 0.5,
     delay: 0.15,
     volume: 0.62
+  }
+]
+
+/**
+ * Loud, rude, mostly monophonic: acid lines, distorted leads, rave stabs and
+ * machine noise. Built on the 24 dB filter, FM / ring-mod, the DESTROY stage
+ * (hard clip, wavefold, fuzz, bitcrush) and the phaser / pump effects.
+ */
+const ROBOT_SEEDS: PatchSeed[] = [
+  {
+    name: 'On Sight Screech',
+    description: 'A torn-speaker acid screech: saw and square slammed into a screaming 24 dB filter, hard-clipped, then bitcrushed while a random LFO glitches the cutoff every 16th. Play low, overlap notes to slide.',
+    osc1: { wave: 'sawtooth', level: 0.8 },
+    osc2: { wave: 'square', level: 0.42, octave: 0, semi: 0, detune: 9 },
+    fm: 0.22,
+    noise: 0.08,
+    filter: { type: 'lowpass', slope: 24, cutoff: 820, resonance: 14, envAmount: 3.4, keyTrack: 0.4, drive: 0.7, fm: 0.2 },
+    ampEnv: { attack: 0.002, decay: 0.2, sustain: 0.85, release: 0.08 },
+    filterEnv: { attack: 0.002, decay: 0.26, sustain: 0.3, release: 0.1 },
+    lfo: { shape: 'random', sync: true, division: 6, pitch: 0, filter: 1.3, amp: 0 },
+    glide: 0.05,
+    mono: true,
+    drive: 0.78,
+    driveType: 'hard',
+    crush: { bits: 0.3, rate: 0.36 },
+    reverb: 0.08,
+    volume: 0.6
   },
   {
-    name: 'Init',
-    description: 'A plain, neutral sawtooth patch with a simple envelope and open filter, ready to shape into a new sound.',
-    osc1: { wave: 'sawtooth', level: 0.75 },
-    osc2: { wave: 'sine', level: 0, octave: 0, detune: 0 },
-    sub: 0,
-    noise: 0,
-    unison: 1,
-    spread: 0,
-    filter: { type: 'lowpass', cutoff: 12000, resonance: 0.7, envAmount: 0, keyTrack: 0 },
-    ampEnv: { attack: 0.01, decay: 0.2, sustain: 0.8, release: 0.25 },
-    filterEnv: { attack: 0.01, decay: 0.2, sustain: 0.8, release: 0.25 },
-    lfo: { rate: 5, pitch: 0, filter: 0 },
-    glide: 0,
-    mono: false,
-    drive: 0,
-    reverb: 0,
-    delay: 0,
-    volume: 0.75
+    name: 'Berghain Acid',
+    description: 'The 303 line at 4am: one saw through a squelching 24 dB filter with a fast envelope, pushed into fuzz. Overlap notes in the piano roll to slide; louder notes bite harder.',
+    osc1: { wave: 'sawtooth', level: 0.85 },
+    filter: { type: 'lowpass', slope: 24, cutoff: 300, resonance: 17, envAmount: 4.2, keyTrack: 0.3, drive: 0.45, fm: 0 },
+    ampEnv: { attack: 0.002, decay: 0.3, sustain: 0.6, release: 0.1 },
+    filterEnv: { attack: 0.002, decay: 0.22, sustain: 0.05, release: 0.15 },
+    glide: 0.07,
+    mono: true,
+    drive: 0.46,
+    driveType: 'fuzz',
+    delay: 0.18,
+    reverb: 0.06,
+    volume: 0.62
+  },
+  {
+    name: 'Da Funk Growl',
+    description: 'A fat, rubbery mono lead: stacked saws an octave apart, overdriven into a resonant filter that barks on every note, with long glides between them.',
+    osc1: { wave: 'sawtooth', level: 0.8 },
+    osc2: { wave: 'sawtooth', level: 0.5, octave: -1, semi: 0, detune: -6 },
+    sub: 0.2,
+    filter: { type: 'lowpass', slope: 24, cutoff: 680, resonance: 9, envAmount: 2.6, keyTrack: 0.45, drive: 0.6, fm: 0 },
+    ampEnv: { attack: 0.004, decay: 0.25, sustain: 0.8, release: 0.12 },
+    filterEnv: { attack: 0.004, decay: 0.36, sustain: 0.22, release: 0.2 },
+    lfo: { shape: 'sine', rate: 5.5, pitch: 6 },
+    glide: 0.09,
+    mono: true,
+    drive: 0.55,
+    driveType: 'soft',
+    delay: 0.1,
+    volume: 0.56
+  },
+  {
+    name: 'Robot Rock',
+    description: 'A fuzzed-out square lead swirling through a slow phaser — a guitar riff played by a machine.',
+    osc1: { wave: 'square', level: 0.75 },
+    osc2: { wave: 'sawtooth', level: 0.45, octave: 0, semi: 0, detune: 11 },
+    filter: { type: 'lowpass', slope: 24, cutoff: 2400, resonance: 4, envAmount: 1.5, keyTrack: 0.5, drive: 0.3, fm: 0 },
+    ampEnv: { attack: 0.003, decay: 0.2, sustain: 0.85, release: 0.14 },
+    filterEnv: { attack: 0.003, decay: 0.3, sustain: 0.4, release: 0.2 },
+    glide: 0.03,
+    mono: true,
+    drive: 0.62,
+    driveType: 'fuzz',
+    phaser: { mix: 0.85, rate: 0.25 },
+    delay: 0.12,
+    reverb: 0.1,
+    volume: 0.6
+  },
+  {
+    name: 'Robot Voice',
+    description: 'A talking, vowel-like lead: osc 2 shakes a resonant band-pass filter at audio rate while a synced LFO opens and closes its mouth every beat.',
+    osc1: { wave: 'sawtooth', level: 0.8 },
+    osc2: { wave: 'square', level: 0.2, octave: -1, semi: 0, detune: 0 },
+    filter: { type: 'bandpass', slope: 24, cutoff: 1100, resonance: 8, envAmount: 0.8, keyTrack: 0.2, drive: 0.4, fm: 0.42 },
+    ampEnv: { attack: 0.006, decay: 0.2, sustain: 0.9, release: 0.14 },
+    lfo: { shape: 'triangle', sync: true, division: 3, filter: 1.5 },
+    glide: 0.05,
+    mono: true,
+    drive: 0.4,
+    driveType: 'soft',
+    phaser: { mix: 0.3, rate: 0.5 },
+    delay: 0.14,
+    volume: 0.9
+  },
+  {
+    name: 'French Pump',
+    description: 'A wide filtered supersaw that ducks on every beat like it is sidechained to the kick, with a two-bar filter sweep — hold a chord and press play.',
+    osc1: { wave: 'sawtooth', level: 0.65 },
+    osc2: { wave: 'sawtooth', level: 0.4, octave: 1, semi: 0, detune: -8 },
+    sub: 0.15,
+    unison: 5,
+    spread: 22,
+    filter: { type: 'lowpass', slope: 12, cutoff: 1500, resonance: 3, envAmount: 0.6, keyTrack: 0.3, drive: 0, fm: 0 },
+    ampEnv: { attack: 0.01, decay: 0.4, sustain: 0.85, release: 0.35 },
+    lfo: { shape: 'sine', sync: true, division: 0, filter: 1.6 },
+    drive: 0.15,
+    phaser: { mix: 0.35, rate: 0.15 },
+    pump: 0.85,
+    reverb: 0.3,
+    delay: 0.08,
+    volume: 0.7
+  },
+  {
+    name: 'Hoover Stab',
+    description: 'The rave hoover: seven wildly detuned saws over a square an octave down, swooping up into pitch at the start of every note. Play minor chords, short and loud.',
+    osc1: { wave: 'sawtooth', level: 0.7 },
+    osc2: { wave: 'square', level: 0.5, octave: -1, semi: 0, detune: 14 },
+    unison: 7,
+    spread: 38,
+    filter: { type: 'lowpass', slope: 12, cutoff: 3800, resonance: 2, envAmount: 1, keyTrack: 0.4, drive: 0.2, fm: 0 },
+    ampEnv: { attack: 0.005, decay: 0.4, sustain: 0.75, release: 0.25 },
+    filterEnv: { attack: 0.01, decay: 0.5, sustain: 0.5, release: 0.3 },
+    pitchEnv: { amount: -12, decay: 0.09 },
+    lfo: { shape: 'triangle', rate: 6, pitch: 14 },
+    drive: 0.35,
+    driveType: 'hard',
+    reverb: 0.3,
+    delay: 0.1,
+    volume: 0.52
+  },
+  {
+    name: 'Warehouse Rumble',
+    description: 'A rolling sub-bass drone for dark techno: a low saw and square folded back on themselves, with a synced LFO chugging the filter in 8ths and a heavy pump. Hold one low note.',
+    osc1: { wave: 'sawtooth', level: 0.7 },
+    osc2: { wave: 'square', level: 0.4, octave: -1, semi: 0, detune: -12 },
+    sub: 0.6,
+    noise: 0.05,
+    filter: { type: 'lowpass', slope: 24, cutoff: 190, resonance: 6, envAmount: 1, keyTrack: 0.1, drive: 0.5, fm: 0 },
+    ampEnv: { attack: 0.01, decay: 0.5, sustain: 0.9, release: 0.3 },
+    lfo: { shape: 'sawtooth', sync: true, division: 4, filter: 1.5 },
+    mono: true,
+    glide: 0.04,
+    drive: 0.5,
+    driveType: 'fold',
+    pump: 0.6,
+    reverb: 0.28,
+    volume: 0.68
+  },
+  {
+    name: 'Steel Hall',
+    description: 'A struck sheet of metal: FM and ring-mod between two sines a fifth apart, lightly folded, ringing out in a concrete room. Industrial percussion and bell stabs.',
+    osc1: { wave: 'sine', level: 0.8 },
+    osc2: { wave: 'sine', level: 0, octave: 1, semi: 7, detune: 0 },
+    fm: 0.55,
+    ring: 0.4,
+    filter: { type: 'lowpass', slope: 12, cutoff: 9000, resonance: 1, envAmount: 0.5, keyTrack: 0.5, drive: 0, fm: 0 },
+    ampEnv: { attack: 0.001, decay: 0.7, sustain: 0, release: 0.5 },
+    filterEnv: { attack: 0.001, decay: 0.5, sustain: 0.1, release: 0.4 },
+    drive: 0.3,
+    driveType: 'fold',
+    reverb: 0.42,
+    delay: 0.2,
+    volume: 0.66
+  },
+  {
+    name: 'Rave Laser',
+    description: 'Pew. A square wave dropping three octaves in a tenth of a second through a ringing filter, with echoes. Tune PITCH ENV for zaps, toms or kick thumps.',
+    osc1: { wave: 'square', level: 0.8 },
+    filter: { type: 'lowpass', slope: 12, cutoff: 6000, resonance: 6, envAmount: 2, keyTrack: 0.5, drive: 0.2, fm: 0 },
+    ampEnv: { attack: 0.001, decay: 0.22, sustain: 0, release: 0.1 },
+    filterEnv: { attack: 0.001, decay: 0.18, sustain: 0, release: 0.1 },
+    pitchEnv: { amount: 36, decay: 0.12 },
+    drive: 0.3,
+    driveType: 'hard',
+    delay: 0.3,
+    reverb: 0.15,
+    volume: 0.6
+  },
+  {
+    name: 'Broken Robot',
+    description: 'A malfunctioning machine: a random LFO throws the pitch and a band-pass filter somewhere new every 16th while the crusher chews the result into 8-bit rubble. Hold any key and let it talk.',
+    osc1: { wave: 'square', level: 0.75 },
+    osc2: { wave: 'sawtooth', level: 0.3, octave: 1, semi: 5, detune: 0 },
+    ring: 0.35,
+    filter: { type: 'bandpass', slope: 24, cutoff: 1300, resonance: 10, envAmount: 0, keyTrack: 0.2, drive: 0.5, fm: 0.15 },
+    ampEnv: { attack: 0.002, decay: 0.1, sustain: 0.9, release: 0.06 },
+    lfo: { shape: 'random', sync: true, division: 6, pitch: 700, filter: 2.6 },
+    mono: true,
+    drive: 0.45,
+    driveType: 'hard',
+    crush: { bits: 0.5, rate: 0.6 },
+    delay: 0.16,
+    volume: 0.85
+  },
+  {
+    name: 'Strobe Gate',
+    description: 'A bright detuned pad chopped into 16th-note strobes by a square LFO locked to the tempo. Hold chords; the rhythm plays itself.',
+    osc1: { wave: 'sawtooth', level: 0.65 },
+    osc2: { wave: 'sawtooth', level: 0.45, octave: 1, semi: 0, detune: 7 },
+    unison: 3,
+    spread: 16,
+    filter: { type: 'lowpass', slope: 12, cutoff: 3200, resonance: 2.5, envAmount: 1, keyTrack: 0.4, drive: 0, fm: 0 },
+    ampEnv: { attack: 0.01, decay: 0.6, sustain: 0.85, release: 0.4 },
+    filterEnv: { attack: 0.4, decay: 1.2, sustain: 0.6, release: 0.5 },
+    lfo: { shape: 'square', sync: true, division: 6, amp: 1 },
+    phaser: { mix: 0.25, rate: 0.1 },
+    reverb: 0.35,
+    delay: 0.3,
+    volume: 0.8
   }
+]
+
+export const SYNTH_PRESETS: SynthPatch[] = [
+  ...DONDA_SEEDS.map((seed) => normalizePatch({ ...seed, group: DONDA_GROUP })),
+  ...ROBOT_SEEDS.map((seed) => normalizePatch({ ...seed, group: ROBOT_GROUP })),
+  normalizePatch({ group: 'Blank' })
 ]
 
 const voice = (
@@ -201,7 +403,7 @@ const voice = (
   reverb: number
 ): DrumVoice => ({ tune, decay, tone, drive, level, reverb })
 
-export const DRUM_KITS: DrumKit[] = [
+const KITS: DrumKit[] = [
   {
     name: 'Donda Stadium',
     description: 'Huge sparse arena drums with a deep kick, dark metal, a roomy clap, a towering crash, and a long clean 808.',
@@ -259,6 +461,21 @@ export const DRUM_KITS: DrumKit[] = [
     }
   },
   {
+    name: 'Warehouse 4x4',
+    group: ROBOT_GROUP,
+    description: 'Hard techno drums: a long distorted kick that rumbles into the next one, a dry clap, tight metallic hats, and a crushed ride-like crash.',
+    voices: {
+      kick: voice(-3, 1.9, 0.55, 0.7, 1, 0.3),
+      snare: voice(2, 0.6, 0.7, 0.45, 0.7, 0.1),
+      clap: voice(0, 0.8, 0.6, 0.3, 0.8, 0.22),
+      hat: voice(5, 0.5, 0.85, 0.2, 0.6, 0.02),
+      openhat: voice(4, 0.9, 0.8, 0.25, 0.66, 0.08),
+      perc: voice(-7, 1.4, 0.3, 0.6, 0.7, 0.35),
+      crash: voice(6, 0.7, 0.9, 0.5, 0.6, 0.2),
+      bass808: voice(-5, 0.7, 0.3, 0.75, 0.85, 0.15)
+    }
+  },
+  {
     name: 'Moon Minimal',
     description: 'Soft lo-fi minimal drums keep the kick muted, rim quiet, hats dull, and saturation nearly absent for open arrangements.',
     voices: {
@@ -273,6 +490,8 @@ export const DRUM_KITS: DrumKit[] = [
     }
   }
 ]
+
+export const DRUM_KITS: DrumKit[] = KITS.map((kit) => ({ group: DONDA_GROUP, ...kit }))
 
 export function emptyPattern(bars: 1 | 2 | 4 = 1): Pattern {
   const drums = Object.fromEntries(

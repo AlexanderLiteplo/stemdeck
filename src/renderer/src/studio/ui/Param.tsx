@@ -11,19 +11,25 @@ interface ParamProps {
   max: number
   defaultValue: number
   onChange: (value: number) => void
-  /** 'log' for frequencies/times so the knob's travel feels even. */
-  curve?: 'lin' | 'log'
+  /** 'log' for frequencies/times so the knob's travel feels even; 'sq' gives fine control near the minimum. */
+  curve?: Curve
   format?: (value: number) => string
   size?: number
 }
 
-const toNorm = (v: number, min: number, max: number, curve: 'lin' | 'log') =>
-  curve === 'log'
-    ? Math.log(Math.max(v, min) / min) / Math.log(max / min)
-    : (v - min) / (max - min)
+type Curve = 'lin' | 'log' | 'sq'
 
-const fromNorm = (n: number, min: number, max: number, curve: 'lin' | 'log') =>
-  curve === 'log' ? min * Math.pow(max / min, n) : min + n * (max - min)
+export const toNorm = (v: number, min: number, max: number, curve: Curve = 'lin') => {
+  const clamped = Math.min(max, Math.max(min, v))
+  if (curve === 'log') return Math.log(clamped / min) / Math.log(max / min)
+  const linear = (clamped - min) / (max - min)
+  return curve === 'sq' ? Math.sqrt(linear) : linear
+}
+
+export const fromNorm = (n: number, min: number, max: number, curve: Curve = 'lin') => {
+  if (curve === 'log') return min * Math.pow(max / min, n)
+  return min + (curve === 'sq' ? n * n : n) * (max - min)
+}
 
 export const fmt = {
   pct: (v: number) => `${Math.round(v * 100)}%`,
@@ -96,6 +102,19 @@ export function Seg<T extends string | number>({
 interface Named {
   name: string
   description: string
+  /** Menu section; presets without one fall under the first preset's section. */
+  group?: string
+}
+
+/** Factory presets bucketed by `group`, in first-appearance order. */
+function grouped<T extends Named>(presets: T[]): [string, T[]][] {
+  const groups = new Map<string, T[]>()
+  const fallback = presets.find((p) => p.group)?.group ?? 'Factory'
+  for (const preset of presets) {
+    const key = preset.group ?? fallback
+    groups.set(key, [...(groups.get(key) ?? []), preset])
+  }
+  return [...groups]
 }
 
 /** Factory + user preset picker with save-as and delete. */
@@ -140,13 +159,15 @@ export function PresetBar<T extends Named>({
         {...tip(`${kind} presets`, current.description || 'Your edited sound.')}
       >
         {currentKey === '' && <option value="">{current.name} (edited)</option>}
-        <optgroup label="Donda-inspired">
-          {factory.map((p) => (
-            <option key={p.name} value={`f:${p.name}`}>
-              {p.name}
-            </option>
-          ))}
-        </optgroup>
+        {grouped(factory).map(([group, presets]) => (
+          <optgroup key={group} label={group}>
+            {presets.map((p) => (
+              <option key={p.name} value={`f:${p.name}`}>
+                {p.name}
+              </option>
+            ))}
+          </optgroup>
+        ))}
         {user.length > 0 && (
           <optgroup label="My sounds">
             {user.map((p) => (

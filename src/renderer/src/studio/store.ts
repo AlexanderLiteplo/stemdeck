@@ -17,6 +17,7 @@ import type {
   SynthPatch
 } from './types'
 import type { SongScale } from './chords'
+import { normalizePatch } from './patch'
 
 export type AppView = 'decks' | 'studio'
 
@@ -109,8 +110,9 @@ export const useStudio = create<StudioState>(() => ({
   playing: false,
   recordArm: false,
   pattern: saved.pattern ?? demoPattern(),
-  patch: saved.patch ?? clonePatch(SYNTH_PRESETS[0]),
-  userPatches: saved.userPatches ?? [],
+  // Sounds saved by older versions lack the newer modules; normalizing switches those off.
+  patch: saved.patch ? normalizePatch(saved.patch) : clonePatch(SYNTH_PRESETS[0]),
+  userPatches: (saved.userPatches ?? []).map(normalizePatch),
   kit: saved.kit ?? cloneKit(DRUM_KITS[0]),
   userKits: saved.userKits ?? [],
   selectedDrum: 'kick',

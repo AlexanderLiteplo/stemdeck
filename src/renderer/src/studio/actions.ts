@@ -6,6 +6,7 @@ import { engine } from '../audio/engine'
 import { computePeaks, type WaveformPeaks } from '../audio/analysis'
 import { showToast, useStore } from '../state/store'
 import { studio } from './engine'
+import { randomPatch } from './chaos'
 import { chordNotes, chordPads, type SongScale } from './chords'
 import { DRUM_KITS, SYNTH_PRESETS, cloneKit, clonePatch, emptyPattern } from './presets'
 import { useStudio, type AppView, type KeyMode } from './store'
@@ -239,6 +240,11 @@ export function loadPatch(patch: SynthPatch): void {
   studio.allNotesOff()
   studio.setPatch(next)
   set({ patch: next })
+}
+
+/** Roll a random aggressive sound (the CHAOS button). */
+export function chaosPatch(): void {
+  loadPatch(randomPatch())
 }
 
 export function saveUserPatch(name: string): void {

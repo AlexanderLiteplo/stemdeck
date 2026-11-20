@@ -11,9 +11,10 @@ import {
   type StudioTrackId,
   type SynthPatch
 } from './types'
+import { DEFAULT_PATCH } from './patch'
+import { SynthInstrument } from './synth'
 
 const EPSILON = 0.0001
-const MAX_SYNTH_VOICES = 16
 const LOOKAHEAD_MS = 25
 const SCHEDULE_AHEAD = 0.12
 
@@ -21,28 +22,6 @@ interface TrackBus {
   dry: GainNode
   reverb: GainNode
   delay: GainNode
-}
-
-interface PitchParam {
-  param: AudioParam
-  ratio: number
-}
-
-interface SynthVoice {
-  midi: number
-  velocity: number
-  startedAt: number
-  live: boolean
-  releasing: boolean
-  stolen: boolean
-  cleaned: boolean
-  amp: GainNode
-  filter: BiquadFilterNode
-  filterBase: number
-  sources: AudioScheduledSourceNode[]
-  oscillators: OscillatorNode[]
-  nodes: AudioNode[]
-  pitches: PitchParam[]
 }
 
 interface ActiveChop {
@@ -56,27 +35,6 @@ interface ActiveOpenHat {
   output: GainNode
   sources: AudioScheduledSourceNode[]
   stopped: boolean
-}
-
-const INITIAL_PATCH: SynthPatch = {
-  name: 'Init',
-  description: 'A neutral sawtooth patch.',
-  osc1: { wave: 'sawtooth', level: 0.75 },
-  osc2: { wave: 'sine', level: 0, octave: 0, detune: 0 },
-  sub: 0,
-  noise: 0,
-  unison: 1,
-  spread: 0,
-  filter: { type: 'lowpass', cutoff: 12000, resonance: 0.7, envAmount: 0, keyTrack: 0 },
-  ampEnv: { attack: 0.01, decay: 0.2, sustain: 0.8, release: 0.25 },
-  filterEnv: { attack: 0.01, decay: 0.2, sustain: 0.8, release: 0.25 },
-  lfo: { rate: 5, pitch: 0, filter: 0 },
-  glide: 0,
-  mono: false,
-  drive: 0,
-  reverb: 0,
-  delay: 0,
-  volume: 0.75
 }
 
 const DEFAULT_CHOPS: ChopSettings = {
@@ -113,10 +71,6 @@ const DEFAULT_KIT: DrumKit = {
 
 function clamp(value: number, min: number, max: number): number {
   return Number.isFinite(value) ? Math.max(min, Math.min(max, value)) : min
-}
-
-function midiFrequency(midi: number): number {
-  return 440 * 2 ** ((midi - 69) / 12)
 }
 
 function holdAt(param: AudioParam, when: number): void {
@@ -166,24 +120,12 @@ export class StudioEngine implements StudioEngineApi {
   private delayLeft: DelayNode | null = null
   private delayRight: DelayNode | null = null
 
-  private synthDrive: WaveShaperNode | null = null
-  private synthMakeup: GainNode | null = null
-  private synthVolume: GainNode | null = null
-  private synthReverb: GainNode | null = null
-  private synthDelay: GainNode | null = null
-  private lfo: OscillatorNode | null = null
-  private lfoPitch: GainNode | null = null
-  private lfoFilter: GainNode | null = null
+  private synth: SynthInstrument | null = null
   private noiseBuffer: AudioBuffer | null = null
   private readonly driveCurves = new Map<number, Float32Array<ArrayBuffer>>()
 
-  private patch: SynthPatch = structuredClone(INITIAL_PATCH)
+  private patch: SynthPatch = structuredClone(DEFAULT_PATCH)
   private kit: DrumKit = structuredClone(DEFAULT_KIT)
-  private synthVoices: SynthVoice[] = []
-  private monoVoice: SynthVoice | null = null
-  private sequencerMonoVoice: SynthVoice | null = null
-  private sequencerMonoEnd = 0
-  private liveNoteStack: Array<{ midi: number; velocity: number }> = []
 
   private chopBuffer: AudioBuffer | null = null
   private chopSettings: ChopSettings = { ...DEFAULT_CHOPS }
@@ -267,363 +209,42 @@ export class StudioEngine implements StudioEngineApi {
       track.delay.connect(this.delayInput)
     }
 
-    this.synthDrive = ctx.createWaveShaper()
-    this.synthDrive.oversample = '2x'
-    this.synthMakeup = ctx.createGain()
-    this.synthVolume = ctx.createGain()
-    this.synthReverb = ctx.createGain()
-    this.synthDelay = ctx.createGain()
-    this.synthDrive.connect(this.synthMakeup).connect(this.synthVolume)
-    this.synthVolume.connect(this.tracks.synth.dry)
-    this.synthVolume.connect(this.synthReverb).connect(this.tracks.synth.reverb)
-    this.synthVolume.connect(this.synthDelay).connect(this.tracks.synth.delay)
-
-    this.lfo = ctx.createOscillator()
-    this.lfoPitch = ctx.createGain()
-    this.lfoFilter = ctx.createGain()
-    this.lfo.connect(this.lfoPitch)
-    this.lfo.connect(this.lfoFilter)
-    this.lfo.start()
+    const synth = new SynthInstrument(ctx, this.tracks.synth, this.noiseBuffer)
+    this.synth = synth
+    synth.setBpm(this.bpm)
+    synth.setPatch(this.patch)
+    void ctx.audioWorklet.addModule('worklets/crush-processor.js').then(
+      () => {
+        if (this.synth === synth) synth.enableCrusher()
+      },
+      (error: unknown) => console.warn('Unable to load synth bitcrusher worklet', error)
+    )
 
     this.retuneDelay(ctx.currentTime)
     for (const id of ['drums', 'chops', 'synth'] as StudioTrackId[]) {
       this.applyTrack(id, this.trackStates[id])
     }
-    this.applyPatchGlobals()
   }
 
   setPatch(patch: SynthPatch): void {
-    const modeChanged = patch.mono !== this.patch.mono
-    if (modeChanged) this.allNotesOff()
     this.patch = structuredClone(patch)
-    this.applyPatchGlobals()
-  }
-
-  private applyPatchGlobals(): void {
-    if (!this.ctx) return
-    const now = this.ctx.currentTime
-    if (this.synthDrive) this.synthDrive.curve = this.patch.drive < 0.01 ? null : this.getDriveCurve(this.patch.drive)
-    this.synthMakeup?.gain.setTargetAtTime(1 / (1 + this.patch.drive * 0.7), now, 0.02)
-    this.synthVolume?.gain.setTargetAtTime(clamp(this.patch.volume, 0, 1), now, 0.02)
-    this.synthReverb?.gain.setTargetAtTime(clamp(this.patch.reverb, 0, 1), now, 0.04)
-    this.synthDelay?.gain.setTargetAtTime(clamp(this.patch.delay, 0, 1), now, 0.04)
-    this.lfo?.frequency.setTargetAtTime(clamp(this.patch.lfo.rate, 0.05, 20), now, 0.03)
-    this.lfoPitch?.gain.setTargetAtTime(clamp(this.patch.lfo.pitch, 0, 100), now, 0.03)
-    this.lfoFilter?.gain.setTargetAtTime(clamp(this.patch.lfo.filter, 0, 4) * 1200, now, 0.03)
+    this.synth?.setPatch(this.patch)
   }
 
   noteOn(midi: number, velocity = 1, when?: number): void {
-    if (!this.ctx) return
-    const time = Math.max(when ?? this.ctx.currentTime, this.ctx.currentTime)
-    const note = clamp(midi, 0, 127)
-    const level = clamp(velocity, 0, 1)
-    if (this.patch.mono) {
-      this.liveNoteStack.push({ midi: note, velocity: level })
-      if (this.monoVoice && !this.monoVoice.cleaned && !this.monoVoice.releasing) {
-        this.monoVoice.midi = note
-        this.monoVoice.velocity = level
-        holdAt(this.monoVoice.amp.gain, time)
-        this.monoVoice.amp.gain.setTargetAtTime(
-          Math.max(EPSILON, level * clamp(this.patch.ampEnv.sustain, 0, 1)),
-          time,
-          0.01
-        )
-        this.setVoicePitch(this.monoVoice, note, time, this.patch.glide, true)
-      } else {
-        this.monoVoice = this.createVoice(note, level, time, true)
-      }
-      return
-    }
-    this.createVoice(note, level, time, true)
+    this.synth?.noteOn(midi, velocity, when)
   }
 
   noteOff(midi: number, when?: number): void {
-    if (!this.ctx) return
-    const time = Math.max(when ?? this.ctx.currentTime, this.ctx.currentTime)
-    if (this.patch.mono) {
-      this.liveNoteStack = this.liveNoteStack.filter((note) => note.midi !== midi)
-      const fallback = this.liveNoteStack.at(-1)
-      if (fallback && this.monoVoice && !this.monoVoice.cleaned) {
-        this.monoVoice.midi = fallback.midi
-        this.monoVoice.velocity = fallback.velocity
-        holdAt(this.monoVoice.amp.gain, time)
-        this.monoVoice.amp.gain.setTargetAtTime(
-          Math.max(EPSILON, fallback.velocity * clamp(this.patch.ampEnv.sustain, 0, 1)),
-          time,
-          0.01
-        )
-        this.setVoicePitch(this.monoVoice, fallback.midi, time, this.patch.glide, true)
-      } else if (this.monoVoice) {
-        this.releaseVoice(this.monoVoice, time, this.patch.ampEnv.release)
-        this.monoVoice = null
-      }
-      return
-    }
-    for (const voice of this.synthVoices) {
-      if (voice.live && voice.midi === midi) this.releaseVoice(voice, time, this.patch.ampEnv.release)
-    }
+    this.synth?.noteOff(midi, when)
   }
 
   playNote(midi: number, velocity: number, when: number, duration: number): void {
-    if (!this.ctx) return
-    const time = Math.max(when, this.ctx.currentTime)
-    const end = time + Math.max(0.005, Number.isFinite(duration) ? duration : 0.005)
-    if (this.patch.mono) {
-      const isLegato =
-        this.sequencerMonoVoice &&
-        !this.sequencerMonoVoice.cleaned &&
-        time <= this.sequencerMonoEnd + 0.03
-      if (isLegato && this.sequencerMonoVoice) {
-        const voice = this.sequencerMonoVoice
-        const holdTime = Math.max(this.ctx.currentTime, Math.min(time, this.sequencerMonoEnd))
-        voice.releasing = false
-        voice.midi = clamp(midi, 0, 127)
-        voice.velocity = clamp(velocity, 0, 1)
-        holdAt(voice.amp.gain, holdTime)
-        voice.amp.gain.setTargetAtTime(
-          Math.max(EPSILON, voice.velocity * clamp(this.patch.ampEnv.sustain, 0, 1)),
-          holdTime,
-          0.01
-        )
-        this.setVoicePitch(voice, voice.midi, time, this.patch.glide, true, holdTime)
-        this.sequencerMonoEnd = Math.max(this.sequencerMonoEnd, end)
-        this.releaseVoice(voice, this.sequencerMonoEnd, this.patch.ampEnv.release)
-      } else {
-        const voice = this.createVoice(clamp(midi, 0, 127), clamp(velocity, 0, 1), time, false)
-        this.sequencerMonoVoice = voice
-        this.sequencerMonoEnd = end
-        if (voice) this.releaseVoice(voice, end, this.patch.ampEnv.release)
-      }
-      return
-    }
-    const voice = this.createVoice(clamp(midi, 0, 127), clamp(velocity, 0, 1), time, false)
-    if (voice) this.releaseVoice(voice, end, this.patch.ampEnv.release)
+    this.synth?.playNote(midi, velocity, when, duration)
   }
 
   allNotesOff(): void {
-    if (!this.ctx) {
-      this.liveNoteStack = []
-      return
-    }
-    const now = this.ctx.currentTime
-    this.liveNoteStack = []
-    for (const voice of [...this.synthVoices]) this.releaseVoice(voice, now, 0.03, true)
-    this.monoVoice = null
-    this.sequencerMonoVoice = null
-    this.sequencerMonoEnd = 0
-  }
-
-  private createVoice(midi: number, velocity: number, when: number, live: boolean): SynthVoice | null {
-    if (!this.ctx || !this.synthDrive || !this.noiseBuffer || !this.lfoPitch || !this.lfoFilter) return null
-    const ctx = this.ctx
-    const time = Math.max(when, ctx.currentTime)
-    const active = this.synthVoices.filter((voice) => !voice.cleaned && !voice.stolen)
-    if (active.length >= MAX_SYNTH_VOICES) {
-      const oldest = active.reduce((a, b) => (a.startedAt <= b.startedAt ? a : b))
-      oldest.stolen = true
-      this.releaseVoice(oldest, time, 0.025, true)
-    }
-
-    const filter = ctx.createBiquadFilter()
-    filter.type = this.patch.filter.type
-    filter.Q.value = clamp(this.patch.filter.resonance, 0.1, 20)
-    const nyquist = ctx.sampleRate * 0.48
-    const keyFactor = 2 ** (((midi - 60) / 12) * clamp(this.patch.filter.keyTrack, 0, 1))
-    const filterBase = clamp(this.patch.filter.cutoff * keyFactor, 20, nyquist)
-    const amp = ctx.createGain()
-    amp.gain.value = EPSILON
-    const voiceOut = ctx.createGain()
-    voiceOut.gain.value = 0.3
-    amp.connect(voiceOut).connect(this.synthDrive)
-
-    const voice: SynthVoice = {
-      midi,
-      velocity,
-      startedAt: time,
-      live,
-      releasing: false,
-      stolen: false,
-      cleaned: false,
-      amp,
-      filter,
-      filterBase,
-      sources: [],
-      oscillators: [],
-      nodes: [filter, amp, voiceOut],
-      pitches: []
-    }
-
-    const unison = Math.round(clamp(this.patch.unison, 1, 7))
-    const normalization = 1 / Math.sqrt(unison)
-    const addOscillatorStack = (
-      wave: OscillatorType,
-      level: number,
-      octave: number,
-      detune: number
-    ): void => {
-      if (level <= 0) return
-      for (let i = 0; i < unison; i++) {
-        const position = unison === 1 ? 0 : i / (unison - 1) - 0.5
-        const oscillator = ctx.createOscillator()
-        oscillator.type = wave
-        oscillator.detune.value = detune + position * 2 * clamp(this.patch.spread, 0, 50)
-        const gain = ctx.createGain()
-        gain.gain.value = level * normalization
-        oscillator.connect(gain).connect(filter)
-        this.lfoPitch!.connect(oscillator.detune)
-        voice.sources.push(oscillator)
-        voice.oscillators.push(oscillator)
-        voice.nodes.push(oscillator, gain)
-        voice.pitches.push({ param: oscillator.frequency, ratio: 2 ** octave })
-        oscillator.start(time)
-      }
-    }
-
-    addOscillatorStack(this.patch.osc1.wave, clamp(this.patch.osc1.level, 0, 1), 0, 0)
-    addOscillatorStack(
-      this.patch.osc2.wave,
-      clamp(this.patch.osc2.level, 0, 1),
-      clamp(this.patch.osc2.octave, -2, 2),
-      clamp(this.patch.osc2.detune, -50, 50)
-    )
-    if (this.patch.sub > 0) {
-      const sub = ctx.createOscillator()
-      sub.type = 'sine'
-      const subGain = ctx.createGain()
-      subGain.gain.value = clamp(this.patch.sub, 0, 1)
-      sub.connect(subGain).connect(filter)
-      this.lfoPitch.connect(sub.detune)
-      voice.sources.push(sub)
-      voice.oscillators.push(sub)
-      voice.nodes.push(sub, subGain)
-      voice.pitches.push({ param: sub.frequency, ratio: 0.5 })
-      sub.start(time)
-    }
-    if (this.patch.noise > 0) {
-      const noise = ctx.createBufferSource()
-      noise.buffer = this.noiseBuffer
-      noise.loop = true
-      const noiseGain = ctx.createGain()
-      noiseGain.gain.value = clamp(this.patch.noise, 0, 1) * 0.5
-      noise.connect(noiseGain).connect(filter)
-      voice.sources.push(noise)
-      voice.nodes.push(noise, noiseGain)
-      noise.start(time)
-    }
-
-    if (voice.sources.length === 0) {
-      voiceOut.disconnect()
-      return null
-    }
-    filter.connect(amp)
-    this.lfoFilter.connect(filter.detune)
-    this.setVoicePitch(voice, midi, time, 0, false)
-    this.scheduleVoiceAttack(voice, time)
-    voice.sources[0].onended = () => this.cleanupVoice(voice)
-    this.synthVoices.push(voice)
-    return voice
-  }
-
-  private scheduleVoiceAttack(voice: SynthVoice, when: number): void {
-    const ampEnv = this.patch.ampEnv
-    const filterEnv = this.patch.filterEnv
-    const ampAttackEnd = when + Math.max(0.001, ampEnv.attack)
-    const ampDecayEnd = ampAttackEnd + Math.max(0.001, ampEnv.decay)
-    voice.amp.gain.setValueAtTime(EPSILON, when)
-    voice.amp.gain.linearRampToValueAtTime(voice.velocity, ampAttackEnd)
-    voice.amp.gain.exponentialRampToValueAtTime(
-      Math.max(EPSILON, voice.velocity * clamp(ampEnv.sustain, 0, 1)),
-      ampDecayEnd
-    )
-
-    const envVelocity = 0.7 + voice.velocity * 0.3
-    const peak = clamp(voice.filterBase * 2 ** (this.patch.filter.envAmount * envVelocity), 20, this.ctx!.sampleRate * 0.48)
-    const sustain = clamp(
-      voice.filterBase * 2 ** (this.patch.filter.envAmount * clamp(filterEnv.sustain, 0, 1) * envVelocity),
-      20,
-      this.ctx!.sampleRate * 0.48
-    )
-    const filterAttackEnd = when + Math.max(0.001, filterEnv.attack)
-    const filterDecayEnd = filterAttackEnd + Math.max(0.001, filterEnv.decay)
-    voice.filter.frequency.setValueAtTime(Math.max(20, voice.filterBase), when)
-    voice.filter.frequency.exponentialRampToValueAtTime(Math.max(20, peak), filterAttackEnd)
-    voice.filter.frequency.exponentialRampToValueAtTime(Math.max(20, sustain), filterDecayEnd)
-  }
-
-  private setVoicePitch(
-    voice: SynthVoice,
-    midi: number,
-    when: number,
-    glide: number,
-    updateFilter: boolean,
-    filterWhen = when
-  ): void {
-    const base = midiFrequency(midi)
-    for (const pitch of voice.pitches) {
-      const target = Math.max(1, base * pitch.ratio)
-      if (glide > 0) {
-        holdAt(pitch.param, when)
-        pitch.param.setTargetAtTime(target, when, Math.max(0.001, glide / 3))
-      } else {
-        pitch.param.setValueAtTime(target, when)
-      }
-    }
-    if (this.ctx && updateFilter) {
-      const keyFactor = 2 ** (((midi - 60) / 12) * clamp(this.patch.filter.keyTrack, 0, 1))
-      voice.filterBase = clamp(this.patch.filter.cutoff * keyFactor, 20, this.ctx.sampleRate * 0.48)
-      const envVelocity = 0.7 + voice.velocity * 0.3
-      const target = clamp(
-        voice.filterBase *
-          2 ** (this.patch.filter.envAmount * clamp(this.patch.filterEnv.sustain, 0, 1) * envVelocity),
-        20,
-        this.ctx.sampleRate * 0.48
-      )
-      holdAt(voice.filter.frequency, filterWhen)
-      if (glide > 0) {
-        voice.filter.frequency.setTargetAtTime(target, filterWhen, Math.max(0.001, glide / 3))
-      } else {
-        voice.filter.frequency.setTargetAtTime(target, filterWhen, 0.005)
-      }
-    }
-  }
-
-  private releaseVoice(voice: SynthVoice, when: number, release: number, force = false): void {
-    if (voice.cleaned || (voice.releasing && !force)) return
-    voice.releasing = true
-    const time = Math.max(when, this.ctx?.currentTime ?? when)
-    const end = time + Math.max(0.005, release)
-    holdAt(voice.amp.gain, time)
-    voice.amp.gain.exponentialRampToValueAtTime(EPSILON, end)
-    holdAt(voice.filter.frequency, time)
-    voice.filter.frequency.exponentialRampToValueAtTime(Math.max(20, voice.filterBase), end)
-    for (const source of voice.sources) {
-      try {
-        source.stop(end + 0.03)
-      } catch {
-        // Already ended.
-      }
-    }
-  }
-
-  private cleanupVoice(voice: SynthVoice): void {
-    if (voice.cleaned) return
-    voice.cleaned = true
-    for (const oscillator of voice.oscillators) {
-      try {
-        this.lfoPitch?.disconnect(oscillator.detune)
-      } catch {
-        // Already disconnected.
-      }
-    }
-    try {
-      this.lfoFilter?.disconnect(voice.filter.detune)
-    } catch {
-      // Already disconnected.
-    }
-    for (const node of voice.nodes) node.disconnect()
-    this.synthVoices = this.synthVoices.filter((candidate) => candidate !== voice)
-    if (this.monoVoice === voice) this.monoVoice = null
-    if (this.sequencerMonoVoice === voice) this.sequencerMonoVoice = null
+    this.synth?.allNotesOff()
   }
 
   setKit(kit: DrumKit): void {
@@ -987,6 +608,7 @@ export class StudioEngine implements StudioEngineApi {
 
   setBpm(bpm: number): void {
     this.bpm = clamp(bpm, 20, 300)
+    this.synth?.setBpm(this.bpm)
     if (this.ctx) this.retuneDelay(this.ctx.currentTime)
   }
 
@@ -1018,6 +640,7 @@ export class StudioEngine implements StudioEngineApi {
     this.scheduledSteps.length = 0
     this.stopChops()
     this.allNotesOff()
+    this.synth?.resetPump()
   }
 
   getStepPosition(): number {
@@ -1054,6 +677,7 @@ export class StudioEngine implements StudioEngineApi {
   }
 
   private scheduleStep(step: number, when: number, stepDuration: number): void {
+    if (step % 4 === 0) this.synth?.pump(when, 60 / this.bpm)
     const pattern = this.pattern
     if (pattern) {
       for (const id of DRUM_VOICES) {

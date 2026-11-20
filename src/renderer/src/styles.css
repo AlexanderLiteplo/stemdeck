@@ -1365,6 +1365,129 @@ button:disabled {
   stroke-linejoin: round;
 }
 
+/* Synth: chaos button, destroy module, mayhem pad */
+
+.chaos-btn {
+  padding: 5px 12px;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  color: #ffe9b0;
+  background: linear-gradient(135deg, #4a1230, #3b2a0c);
+  border: 1px solid #ff7a39;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: box-shadow 120ms, transform 60ms;
+}
+
+.chaos-btn:hover {
+  box-shadow: 0 0 12px rgba(255, 122, 57, 0.45);
+}
+
+.chaos-btn:active {
+  transform: scale(0.96);
+}
+
+.module.destroy {
+  border-color: #5a2433;
+  background: linear-gradient(180deg, #24161f, var(--panel-2));
+}
+
+.module.destroy h4 {
+  color: var(--red);
+}
+
+.module.destroy .knob-pointer {
+  stroke: var(--red);
+}
+
+.module.destroy .param-value {
+  color: #ff8fa3;
+}
+
+.module.destroy .seg button.active {
+  background: #47192a;
+  color: #ffb3c1;
+}
+
+.module.mayhem {
+  align-items: flex-start;
+}
+
+.xy-pad {
+  position: relative;
+  width: 196px;
+  height: 118px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  background-color: #0e1119;
+  background-image: linear-gradient(rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255, 255, 255, 0.05) 1px, transparent 1px),
+    radial-gradient(circle at 100% 0%, rgba(255, 77, 109, 0.28), transparent 62%);
+  background-size: 100% 25%, 12.5% 100%, 100% 100%;
+  cursor: crosshair;
+  overflow: hidden;
+  touch-action: none;
+}
+
+.xy-pad.dragging {
+  border-color: var(--red);
+  box-shadow: 0 0 14px rgba(255, 77, 109, 0.35);
+}
+
+.xy-line {
+  position: absolute;
+  background: rgba(255, 255, 255, 0.16);
+  pointer-events: none;
+}
+
+.xy-line.x {
+  top: 0;
+  bottom: 0;
+  width: 1px;
+}
+
+.xy-line.y {
+  left: 0;
+  right: 0;
+  height: 1px;
+}
+
+.xy-puck {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  margin: -7px 0 0 -7px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--red);
+  box-shadow: 0 0 10px rgba(255, 77, 109, 0.8);
+  pointer-events: none;
+}
+
+.xy-pad.dragging .xy-puck {
+  transform: scale(1.25);
+}
+
+.xy-axis {
+  position: absolute;
+  font-size: 8px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  color: var(--dim);
+  pointer-events: none;
+}
+
+.xy-axis.x {
+  right: 5px;
+  bottom: 3px;
+}
+
+.xy-axis.y {
+  left: 5px;
+  top: 3px;
+}
+
 /* Piano */
 
 .piano-wrap {
