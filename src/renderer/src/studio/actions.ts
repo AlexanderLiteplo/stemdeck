@@ -10,6 +10,7 @@ import { randomPatch } from './chaos'
 import { chordNotes, chordPads, type SongScale } from './chords'
 import { carve, clampShift, clipEnd, splitClip } from './clips'
 import { clearHistory, takeRedo, takeUndo, withoutHistory } from './history'
+import { BUILTIN_PREFIX, builtinLabel } from './builtinSamples'
 import { writeDrumRows } from './drumtext'
 import { GROOVES } from './grooves'
 import { DRUM_KITS, SYNTH_PRESETS, cloneKit, clonePatch, newPattern, uid } from './presets'
@@ -989,7 +990,7 @@ function ensureSample(path: string): Promise<boolean> {
     pendingSamples.get(path) ??
     (async () => {
       try {
-        const buffer = await engine.decode(await window.stemdeck.readFile(path))
+        const buffer = await engine.decode(await readSampleFile(path))
         studio.setDrumSample(path, buffer)
         decodedSamples.add(path)
         return true
@@ -1001,6 +1002,21 @@ function ensureSample(path: string): Promise<boolean> {
     })()
   pendingSamples.set(path, pending)
   return pending
+}
+
+/**
+ * Bytes of a sample. User samples are absolute paths read through the preload;
+ * built-in ones ('builtin:…') live in the app's samples folder next to
+ * index.html — fetched over http in development, and read from disk (inside
+ * the app archive) in the packaged app, where the page is a file:// URL.
+ */
+async function readSampleFile(path: string): Promise<ArrayBuffer> {
+  if (!path.startsWith(BUILTIN_PREFIX)) return window.stemdeck.readFile(path)
+  const url = new URL(`samples/${path.slice(BUILTIN_PREFIX.length)}`, document.baseURI)
+  if (url.protocol === 'file:') return window.stemdeck.readFile(decodeURIComponent(url.pathname))
+  const response = await fetch(url)
+  if (!response.ok) throw new Error(`${response.status} ${url.pathname}`)
+  return response.arrayBuffer()
 }
 
 /** Decode every sample a kit uses. Pads whose file is missing keep playing their built-in sound. */
@@ -1015,10 +1031,13 @@ function loadKitSamples(kit: DrumKit): void {
 
 const AUDIO_FILE = /\.(wav|aiff?|mp3|flac|ogg|m4a|aac)$/i
 
-/** Put a sound file on a drum pad (it replaces the built-in sound until cleared). */
+/**
+ * Put a sound on a drum pad (it replaces the synthesized sound until cleared):
+ * a user file by absolute path, or a bundled one by its 'builtin:' path.
+ */
 export async function loadDrumSample(id: DrumVoiceId, path: string): Promise<void> {
-  const name = path.split(/[\\/]/).pop() ?? 'sample'
-  if (!AUDIO_FILE.test(name)) {
+  const name = builtinLabel(path) ?? path.split(/[\\/]/).pop() ?? 'sample'
+  if (!AUDIO_FILE.test(path)) {
     showToast(`${name} isn't an audio file — drop a WAV, AIFF, MP3, FLAC, OGG or M4A`)
     return
   }

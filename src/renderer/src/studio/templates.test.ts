@@ -2,6 +2,7 @@
  * Run with `npm test`. Every song template must build into a song the app
  * accepts: tracks, patterns and clips that all point at each other correctly.
  */
+import { BUILTIN_SAMPLES } from './builtinSamples'
 import { clipEnd } from './clips'
 import { writeDrumRows } from './drumtext'
 import { GROOVES } from './grooves'
@@ -68,6 +69,15 @@ for (const kit of DRUM_KITS) {
   check(stable(normalizeKit(kit)) === stable(kit), `kit ${kit.name} is not normalized`)
 }
 check(new Set(DRUM_KITS.map((k) => k.name)).size === DRUM_KITS.length, 'kit names are unique')
+// Kits that play recordings only point at sounds that ship with the app, and new songs start on one.
+const builtinPaths = new Set(BUILTIN_SAMPLES.map((s) => s.path))
+for (const kit of DRUM_KITS) {
+  for (const voice of Object.values(kit.voices)) {
+    if (voice.sample) check(builtinPaths.has(voice.sample.path), `kit ${kit.name} uses a sample that is not bundled: ${voice.sample.path}`)
+  }
+}
+check(DRUM_KITS[0].name === 'Real 808', 'new songs start on the Real 808 kit')
+check(BUILTIN_SAMPLES.every((s) => /\.wav$/i.test(s.path) && s.pads.length > 0), 'every built-in sample is a WAV made for at least one pad')
 // A kit saved by an older version under a factory name is swapped for the new factory kit.
 const legacy = { name: 'Donda Stadium', description: '', voices: { kick: { tune: -2, decay: 1.35, tone: 0.35, drive: 0.18, level: 0.95, reverb: 0.18 } } }
 check(normalizeKit(legacy, DRUM_KITS).voices.kick.model === DRUM_KITS.find((k) => k.name === 'Donda Stadium')!.voices.kick.model, 'legacy factory kit is upgraded')

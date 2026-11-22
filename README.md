@@ -31,7 +31,7 @@ Switch to **STUDIO** in the top bar for a GarageBand-style song maker. Its audio
 - **Undo and shortcuts**: ⌘Z / ⇧⌘Z undo and redo any change to the song (100 steps). On the timeline: ⌘C / ⌘X / ⌘V (pastes at the playhead), ⌘D, ⌘T, ⌘A, ⌫, ← →. In the piano roll: ⌘C / ⌘X / ⌘V / ⌘D for notes.
 - **Tracks**: one drum track, one chop track, and up to 8 synth tracks (**＋ SYNTH TRACK**), each with its own sound, mute, solo and volume.
 - **Chopper**: drag any library track (including YouTube downloads) in. It's sliced on its detected beat grid into 16 pads (⅛ note to 2 bars each). You can fix the sample BPM, nudge the grid, page through the song, chop a single stem, and turn on fit-to-tempo, choke, pitch and fade.
-- **Drums**: 8 pads (kick, snare, clap, hats, perc, cymbal, 808). Each pad has several synthesized styles (808, 909, boom-bap, breakbeat, techno…) with tune/decay/tone/drive/pan/reverb/level, or plays your own sample: drop any audio file from Finder or a track from the library onto a pad. **PUNCH**, **CRUNCH** and **ROOM** compress, saturate and place the whole kit. 11 kits (Classic 808, Classic 909, Boom Bap, Trap, Jungle Break…); save your own. **GROOVES** loads a classic pattern per style (boom bap, trap, drill, house, techno, jungle, dembow, funk), and right-clicking a step makes it a 2/3/4-hit roll.
+- **Drums**: 8 pads (kick, snare, clap, hats, perc, cymbal, 808). Pads play real recordings — a TR-808 sampled in 1994 and the uzu analog kit, 82 sounds to pick from per pad under **SOUND** — or one of several synthesized styles (808, 909, boom-bap, breakbeat, techno…) with tune/decay/tone/drive/pan/reverb/level, or plays your own sample: drop any audio file from Finder or a track from the library onto a pad. **PUNCH**, **CRUNCH** and **ROOM** compress, saturate and place the whole kit. 15 kits (Real 808, Real 808 Trap, uzu Analog, uzu Punch, then synthesized ones); save your own. **GROOVES** loads a classic pattern per style (boom bap, trap, drill, house, techno, jungle, dembow, funk), and right-clicking a step makes it a 2/3/4-hit roll.
 - **Synth**: 2 oscillators with FM and ring-mod, sub/noise/unison, a 12/24 dB filter with drive, filter FM and its own envelope, amp ADSR, a pitch-sweep envelope, an LFO with tempo sync and a random shape, and mono/glide. **DESTROY** adds soft/hard/fold/fuzz distortion and a bitcrusher; FX add a phaser, a beat-synced sidechain **PUMP**, reverb and delay. 23 presets, from gospel organ to acid screech and jungle reese bass; **⚡ CHAOS** rolls a random one and the **MAYHEM PAD** sweeps the filter plus one more knob while you play. Save your own.
 - **Sequencer**: step grid for drums and chops, piano roll for the synth, swing, metronome and live **● REC**, which quantizes what you play into the open pattern.
 - **Keyboard**: Space = play/stop, Tab = switch track. On a synth track the A–; row plays notes (Z/X = octave). On drums/chops, 1234 / QWER / ASDF / ZXCV play the pads.
@@ -107,3 +107,10 @@ PRs welcome!
 ## License
 
 [MIT](LICENSE) — the SoundTouch audio processing library used for keylock is [LGPL-2.1](https://gitlab.com/soundtouch/soundtouch) via SoundTouchJS.
+
+## Credits
+
+Built-in drum samples (see `src/renderer/public/samples/CREDITS.md`):
+
+- **TR-808** recordings by Michael Fischer (Technopolis, 1994), via [tidalcycles/sounds-tr808-fischer](https://github.com/tidalcycles/sounds-tr808-fischer), CC0 1.0.
+- **uzu** drum kit by Mot4i, Switch Angel and Ludens, via [tidalcycles/uzu-drumkit](https://github.com/tidalcycles/uzu-drumkit), public domain (Unlicense).

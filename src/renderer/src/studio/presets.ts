@@ -17,6 +17,7 @@ import {
   type SynthPatch,
   type TrackKind
 } from './types'
+import { builtinLabel } from './builtinSamples'
 import { normalizePatch } from './patch'
 
 type DeepPartial<T> = { [K in keyof T]?: T[K] extends object ? DeepPartial<T[K]> : T[K] }
@@ -444,7 +445,8 @@ export const SYNTH_PRESETS: SynthPatch[] = [
   normalizePatch({ group: 'Blank' })
 ]
 
-export const CLASSICS_GROUP = 'Classics'
+export const REAL_GROUP = 'Real drums'
+export const SYNTH_GROUP = 'Synthesized'
 
 const v = (
   model: DrumModel,
@@ -470,8 +472,69 @@ const kit = (
  * balancing: kick loudest, hats and cymbals well under it, panned a little
  * apart like a real kit. The first kit is what new songs start with.
  */
+/** A pad that plays a bundled recording; `model` is what it falls back to while the file loads. */
+const smp = (
+  model: DrumModel,
+  file: string,
+  level: number,
+  pan = 0,
+  reverb = 0.04,
+  tune = 0,
+  drive = 0
+): DrumVoice => ({
+  model,
+  sample: { path: `builtin:${file}`, name: builtinLabel(`builtin:${file}`) ?? file },
+  tune,
+  decay: 1,
+  tone: 0.5,
+  drive,
+  level,
+  pan,
+  reverb
+})
+
 export const DRUM_KITS: DrumKit[] = [
-  kit('Classic 808', CLASSICS_GROUP, 'The Roland TR-808: boomy long kick, snappy tuned snare, the famous clap and cowbell, sizzling metal hats. Hip-hop, trap, electro.', [0.35, 0.1, 0.08], {
+  kit('Real 808', REAL_GROUP, 'Recordings of a real Roland TR-808 (Michael Fischer, 1994): the boom kick, snare, clap, hats, cowbell and cymbal hip-hop, electro and trap were built on. Pick other 808 recordings per pad under SOUND.', [0.35, 0.1, 0.08], {
+    kick: smp('808', 'tr808/bd5050.wav', 0.95),
+    snare: smp('808', 'tr808/sd5050.wav', 0.75),
+    clap: smp('808', 'tr808/cp.wav', 0.7, 0, 0.1),
+    hat: smp('808', 'tr808/ch.wav', 0.42, 0.2),
+    openhat: smp('808', 'tr808/oh50.wav', 0.38, 0.25),
+    perc: smp('cowbell', 'tr808/cb.wav', 0.4, -0.25),
+    crash: smp('crash', 'tr808/cy5050.wav', 0.35, -0.15, 0.1),
+    bass808: smp('clean', 'tr808/bd5010.wav', 0.85)
+  }),
+  kit('Real 808 Trap', REAL_GROUP, 'Real TR-808 recordings set up for trap: a short clicky kick, the high snappy snare, a roomy clap, crisp hats for rolls (right-click a hat step) and the longest 808 boom, driven a little.', [0.45, 0.25, 0.1], {
+    kick: smp('808', 'tr808/bd1025.wav', 1),
+    snare: smp('crack', 'tr808/sd1010.wav', 0.8, 0, 0.08),
+    clap: smp('big', 'tr808/cp.wav', 0.8, 0, 0.18),
+    hat: smp('808', 'tr808/ch.wav', 0.42, 0.2),
+    openhat: smp('808', 'tr808/oh25.wav', 0.38, 0.25),
+    perc: smp('rim', 'tr808/rs.wav', 0.45, -0.25),
+    crash: smp('crash', 'tr808/cy5075.wav', 0.35, -0.15, 0.12),
+    bass808: smp('dirty', 'tr808/bd5010.wav', 0.9, 0, 0, 0, 0.25)
+  }),
+  kit('uzu Analog', REAL_GROUP, 'The uzu kit: modern electronic drums run through analog gear and an LA-76-style compressor — round kick, tight snare, warm hats and ride. House, techno, electronic.', [0.4, 0.15, 0.12], {
+    kick: smp('909', 'uzu/bd-14_bd_switchangel.wav', 0.95),
+    snare: smp('909', 'uzu/sd-13_sd_switchangel_2.wav', 0.75),
+    clap: smp('808', 'uzu/cp-10_cp_switchangel.wav', 0.7, 0, 0.1),
+    hat: smp('909', 'uzu/hh-10_hh_switchangel.wav', 0.45, 0.2),
+    openhat: smp('909', 'uzu/oh-12_oh_switchangel.wav', 0.4, 0.25),
+    perc: smp('rim', 'uzu/rim-10_rim_switchangel.wav', 0.45, -0.25),
+    crash: smp('ride', 'uzu/rd-10_rd_switchangel.wav', 0.38, -0.2, 0.08),
+    bass808: smp('clean', 'uzu/bd-17_bd_switchangel.wav', 0.85)
+  }),
+  kit('uzu Punch', REAL_GROUP, 'Harder uzu picks: a short punchy kick, the bright snare, a snappy analog clap, tight hats and a crash, with more bus compression.', [0.6, 0.3, 0.1], {
+    kick: smp('909', 'uzu/bd-16_bd_switchangel.wav', 1),
+    snare: smp('crack', 'uzu/sd-11_sd_switchangel_3.wav', 0.75),
+    clap: smp('808', 'uzu/cp-11_cp_mot4i.wav', 0.7, 0, 0.12),
+    hat: smp('909', 'uzu/hh-13_hh_switchangel.wav', 0.45, 0.2),
+    openhat: smp('909', 'uzu/oh-13_oh_switchangel.wav', 0.4, 0.25),
+    perc: smp('cowbell', 'uzu/cb-10_perc_switchangel.wav', 0.45, -0.25),
+    crash: smp('crash', 'uzu/cr-10_cr_switchangel.wav', 0.35, -0.15, 0.1),
+    bass808: smp('dirty', 'uzu/bd-17_bd_switchangel.wav', 0.85, 0, 0, -2, 0.2)
+  }),
+  kit('Synth 808', SYNTH_GROUP, 'The Roland TR-808: boomy long kick, snappy tuned snare, the famous clap and cowbell, sizzling metal hats. Hip-hop, trap, electro.', [0.35, 0.1, 0.08], {
     kick: v('808', 0, 1, 0.5, 0, 0.95),
     snare: v('808', 0, 1, 0.5, 0, 0.75),
     clap: v('808', 0, 1, 0.5, 0, 0.7, 0, 0.1),
@@ -481,7 +544,7 @@ export const DRUM_KITS: DrumKit[] = [
     crash: v('crash', 0, 1, 0.5, 0, 0.4, -0.15, 0.1),
     bass808: v('clean', 0, 1.2, 0.5, 0.15, 0.85)
   }),
-  kit('Classic 909', CLASSICS_GROUP, 'The Roland TR-909: punchy clicky kick, noisy snare, bright hats and ride. House, techno, garage.', [0.5, 0.2, 0.12], {
+  kit('Synth 909', SYNTH_GROUP, 'The Roland TR-909: punchy clicky kick, noisy snare, bright hats and ride. House, techno, garage.', [0.5, 0.2, 0.12], {
     kick: v('909', 0, 1, 0.6, 0.1, 1),
     snare: v('909', 0, 1, 0.6, 0, 0.8),
     clap: v('808', 0, 1, 0.55, 0, 0.7, 0, 0.12),
@@ -491,7 +554,7 @@ export const DRUM_KITS: DrumKit[] = [
     crash: v('ride', 0, 1, 0.5, 0, 0.4, -0.2, 0.08),
     bass808: v('clean', 0, 1, 0.5, 0.2, 0.8)
   }),
-  kit('Boom Bap', CLASSICS_GROUP, 'Dusty 90s New York: a round, warm kick, a fat snare with body, dark hats, heavy bus compression and grit. Swing it 15–30 %.', [0.65, 0.5, 0.28], {
+  kit('Boom Bap', SYNTH_GROUP, 'Dusty 90s New York: a round, warm kick, a fat snare with body, dark hats, heavy bus compression and grit. Swing it 15–30 %.', [0.65, 0.5, 0.28], {
     kick: v('boom', -1, 1.1, 0.45, 0.25, 1),
     snare: v('fat', -1, 1, 0.4, 0.2, 0.85, 0, 0.08),
     clap: v('big', -2, 1, 0.4, 0.1, 0.6, 0, 0.15),
@@ -501,7 +564,7 @@ export const DRUM_KITS: DrumKit[] = [
     crash: v('ride', -2, 1, 0.35, 0.1, 0.35, -0.2),
     bass808: v('clean', 0, 1, 0.4, 0.2, 0.8)
   }),
-  kit('Trap', CLASSICS_GROUP, 'Modern trap: a short punchy kick, a cracking snare, a big clap, bright hats made for rolls (right-click a hat step), and a long distorted 808.', [0.45, 0.3, 0.1], {
+  kit('Trap', SYNTH_GROUP, 'Modern trap: a short punchy kick, a cracking snare, a big clap, bright hats made for rolls (right-click a hat step), and a long distorted 808.', [0.45, 0.3, 0.1], {
     kick: v('808', 2, 0.55, 0.75, 0.2, 1),
     snare: v('crack', 2, 1, 0.7, 0.1, 0.85, 0, 0.1),
     clap: v('big', 0, 1, 0.6, 0, 0.8, 0, 0.18),

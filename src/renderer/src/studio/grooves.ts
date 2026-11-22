@@ -30,7 +30,7 @@ export const GROOVES: Groove[] = [
     id: 'trap',
     label: 'Trap',
     bpm: 140,
-    kit: 'Trap',
+    kit: 'Real 808 Trap',
     bars: 2,
     rows: {
       kick: 'x......x..x..... x.....x...x...x.',
@@ -57,7 +57,7 @@ export const GROOVES: Groove[] = [
     id: 'house',
     label: 'House',
     bpm: 124,
-    kit: 'Classic 909',
+    kit: 'uzu Analog',
     bars: 2,
     rows: {
       kick: 'x...x...x...x... x...x...x...x...',
@@ -71,7 +71,7 @@ export const GROOVES: Groove[] = [
     id: 'techno',
     label: 'Techno',
     bpm: 130,
-    kit: 'Warehouse 4x4',
+    kit: 'uzu Punch',
     bars: 2,
     rows: {
       kick: 'x...x...x...x... x...x...x...x...',
@@ -98,7 +98,7 @@ export const GROOVES: Groove[] = [
     id: 'dembow',
     label: 'Reggaeton (dembow)',
     bpm: 95,
-    kit: 'Classic 808',
+    kit: 'Real 808',
     bars: 2,
     rows: {
       kick: 'x...x...x...x... x...x...x...x...',
