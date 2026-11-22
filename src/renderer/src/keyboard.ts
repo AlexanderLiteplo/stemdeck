@@ -2,7 +2,7 @@
  * Global computer-keyboard routing.
  *  Decks view:  1..0 = deck A section keys, Q..P = deck B section keys
  *               (Shift = re-save at playhead, Alt = clear).
- *  Studio view: Space = play/stop, Tab = next track, ⌘Z / ⇧⌘Z = undo / redo,
+ *  Studio view: Space = play/stop, Tab = next track, ⌘Z / ⇧⌘Z = undo / redo, ⌘S = save,
  *               Home = playhead to bar 1, and the selected track's
  *               instrument: GarageBand-style musical typing for the synth
  *               (or, in CHORDS mode, one in-key chord per A..L key; Shift =
@@ -18,6 +18,7 @@ import {
   hitPad,
   movePlayhead,
   redo,
+  saveSong,
   setKeyMode,
   shiftKeyOctave,
   synthDown,
@@ -78,6 +79,11 @@ function onKeyDown(e: KeyboardEvent): void {
   if (e.metaKey || e.ctrlKey) {
     // Undo / redo for the song. Other ⌘ shortcuts belong to the timeline and the piano roll.
     if (studio.view !== 'studio' || e.altKey) return
+    if (e.code === 'KeyS') {
+      e.preventDefault()
+      saveSong()
+      return
+    }
     const redoKey = (e.code === 'KeyZ' && e.shiftKey) || e.code === 'KeyY'
     if (redoKey || e.code === 'KeyZ') {
       e.preventDefault()

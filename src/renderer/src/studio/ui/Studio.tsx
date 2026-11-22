@@ -155,7 +155,7 @@ function Transport() {
         className="kbd-hint"
         {...tip(
           'Keyboard shortcuts',
-          'Space play/stop · Tab next track · Home playhead to bar 1 · ⌘Z undo · ⇧⌘Z redo. Timeline (click it first): ⌘C copy · ⌘X cut · ⌘V paste at playhead · ⌘D duplicate · ⌘T split at playhead · ⌘A select all · ⌫ delete · ← → nudge. Piano roll (click it first): ⌘C / ⌘X / ⌘V / ⌘D for notes · ⌘A select all · arrows nudge · ⌫ delete. Letter keys play the selected track.'
+          'Space play/stop · Tab next track · Home playhead to bar 1 · ⌘Z undo · ⇧⌘Z redo · ⌘S save. Timeline (click it first): ⌘C copy · ⌘X cut · ⌘V paste at playhead · ⌘D duplicate · ⌘T split at playhead · ⌘A select all · ⌫ delete · ← → nudge. Piano roll (click it first): ⌘C / ⌘X / ⌘V / ⌘D for notes · ⌘A select all · arrows nudge · ⌫ delete. Letter keys play the selected track.'
         )}
       >
         ⌨ SHORTCUTS

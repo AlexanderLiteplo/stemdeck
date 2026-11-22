@@ -11,8 +11,8 @@ import { chordNotes, chordPads, type SongScale } from './chords'
 import { carve, clampShift, clipEnd, splitClip } from './clips'
 import { clearHistory, takeRedo, takeUndo, withoutHistory } from './history'
 import { DRUM_KITS, SYNTH_PRESETS, cloneKit, clonePatch, newPattern, uid } from './presets'
-import { pickSong, type SongData } from './song'
-import { dropSong, getSong, listSongs, putSong } from './songs'
+import { SONG_KEYS, pickSong, type SongData } from './song'
+import { dropSong, getSong, listSongs, putSong, renameSaved } from './songs'
 import { SONG_TEMPLATES, type TemplateId } from './templates'
 import {
   ZOOM_MAX,
@@ -141,12 +141,50 @@ export function redo(): void {
 
 // ---------- Songs ----------
 
-/** Save the open song into the library (it is otherwise only in the autosaved working state). */
-function stashSong(): void {
+/*
+ * The open song saves itself into the library a moment after every change, so
+ * the song list is always current and nothing depends on remembering to save.
+ * SAVE (⌘S) just does it immediately.
+ */
+
+const AUTOSAVE_MS = 800
+let autosaveTimer: ReturnType<typeof setTimeout> | null = null
+/** Warn once when storage refuses a write, not on every keystroke after. */
+let storageWarned = false
+
+function cancelAutosave(): void {
+  if (autosaveTimer) clearTimeout(autosaveTimer)
+  autosaveTimer = null
+}
+
+/** Write the open song into the library now. Returns false when storage refused it. */
+function writeOpenSong(): boolean {
+  cancelAutosave()
   const s = get()
-  if (!putSong(s.songId, s.songName, pickSong(s))) {
-    showToast('Could not save the song to the library — storage is full')
-  }
+  const ok = putSong(s.songId, s.songName, pickSong(s))
+  if (!ok && !storageWarned) showToast('Could not save — storage is full. Delete some old songs to make room.')
+  storageWarned = !ok
+  set({ songs: listSongs(), songDirty: !ok })
+  return ok
+}
+
+useStudio.subscribe((state, prev) => {
+  // Switching songs is handled by switchSong; this only watches edits to the open song.
+  if (state.songId !== prev.songId) return
+  if (state.songName === prev.songName && !SONG_KEYS.some((key) => state[key] !== prev[key])) return
+  cancelAutosave()
+  autosaveTimer = setTimeout(writeOpenSong, AUTOSAVE_MS)
+  if (!state.songDirty) set({ songDirty: true })
+})
+
+// Closing the window inside the autosave delay must not lose the last edit.
+window.addEventListener('pagehide', () => {
+  if (autosaveTimer) writeOpenSong()
+})
+
+/** SAVE / ⌘S. */
+export function saveSong(): void {
+  if (writeOpenSong()) showToast(`Saved “${get().songName}”`)
 }
 
 /** Swap the open song for another one. History and playback don't carry over. */
@@ -155,7 +193,10 @@ function switchSong(songId: string, songName: string, data: SongData): void {
   applySong(data)
   clearHistory()
   studio.seek(0)
-  set({ songId, songName, songPos: 0, selectedClips: [], songs: listSongs() })
+  set({ songId, songName, songPos: 0, selectedClips: [] })
+  // Loading is not an edit: don't re-save the song just opened (it would look "saved just now").
+  cancelAutosave()
+  set({ songDirty: false, songs: listSongs() })
 }
 
 /** A name not used by any other song: "Jungle starter", "Jungle starter 2", … */
@@ -165,13 +206,14 @@ function freeSongName(base: string): string {
   for (let n = 2; ; n++) if (!taken.has(`${base} ${n}`)) return `${base} ${n}`
 }
 
-/** Start a new song from a template. The open song is saved to the library first, so nothing is lost. */
-export function newSong(templateId: TemplateId): void {
+/** Start a new song from a template and open it. Returns its id. */
+export function newSong(templateId: TemplateId): string {
   const template = SONG_TEMPLATES.find((t) => t.id === templateId) ?? SONG_TEMPLATES[0]
-  const previous = get().songName
-  stashSong()
-  switchSong(uid('song'), freeSongName(template.name), template.build())
-  showToast(`New song from “${template.label}” — “${previous}” is saved in the song menu`)
+  writeOpenSong()
+  const id = uid('song')
+  switchSong(id, freeSongName(template.name), template.build())
+  writeOpenSong()
+  return id
 }
 
 export function openSong(id: string): void {
@@ -181,23 +223,54 @@ export function openSong(id: string): void {
     showToast('That song could not be opened')
     return
   }
-  stashSong()
+  writeOpenSong()
   switchSong(id, song.name, song.data)
 }
 
-export function renameSong(name: string): void {
-  const songName = name.trim()
-  if (songName) set({ songName })
+export function renameSong(id: string, name: string): void {
+  const songName = name.trim().slice(0, 60)
+  if (!songName) return
+  if (id === get().songId) {
+    set({ songName })
+    writeOpenSong()
+  } else {
+    renameSaved(id, songName)
+    set({ songs: listSongs() })
+  }
 }
 
-/** Delete the open song for good and open the most recent other one (or a blank song). */
-export function deleteSong(): void {
-  const doomed = get().songId
-  const next = listSongs().find((song) => song.id !== doomed)
+/** Save a copy of a song under "<name> copy". The open song stays open. Returns the copy's id. */
+export function duplicateSong(id: string): string | null {
+  const s = get()
+  const source = id === s.songId ? { name: s.songName, data: structuredClone(pickSong(s)) } : getSong(id)
+  if (!source) return null
+  const copyId = uid('song')
+  const name = freeSongName(`${source.name} copy`)
+  if (!putSong(copyId, name, source.data)) {
+    showToast('Could not save the copy — storage is full')
+    return null
+  }
+  set({ songs: listSongs() })
+  return copyId
+}
+
+/** Delete a song for good. Deleting the open one opens the most recent other song (or a blank one). */
+export function deleteSong(id: string): void {
+  if (id !== get().songId) {
+    dropSong(id)
+    set({ songs: listSongs() })
+    return
+  }
+  cancelAutosave()
+  const next = listSongs().find((song) => song.id !== id)
   const saved = next ? getSong(next.id) : null
-  dropSong(doomed)
-  if (next && saved) switchSong(next.id, saved.name, saved.data)
-  else switchSong(uid('song'), 'Untitled', SONG_TEMPLATES[0].build())
+  dropSong(id)
+  if (next && saved) {
+    switchSong(next.id, saved.name, saved.data)
+  } else {
+    switchSong(uid('song'), 'Untitled', SONG_TEMPLATES[0].build())
+    writeOpenSong()
+  }
 }
 
 export function initStudio(): void {
@@ -210,6 +283,8 @@ export function initStudio(): void {
   studio.seek(s.songPos)
   studio.onSongEnd = () => set({ playing: false, recordArm: false })
   if (s.chop.trackId) void loadChopTrack(s.chop.trackId, s.chop.source, true)
+  // A song that has never been written to the library (first run) goes in now, so it is listed.
+  if (!listSongs().some((song) => song.id === s.songId)) writeOpenSong()
 }
 
 export function setView(view: AppView): void {
@@ -237,6 +312,12 @@ export function cycleTrack(): void {
 
 function updateTrack(id: string, patch: Partial<StudioTrack>): void {
   set({ tracks: get().tracks.map((t) => (t.id === id ? { ...t, ...patch } : t)) })
+}
+
+/** Rename a track (its lane on the timeline). */
+export function renameTrack(id: string, name: string): void {
+  const trimmed = name.trim().slice(0, 16)
+  if (trimmed) updateTrack(id, { name: trimmed })
 }
 
 export function setTrackMixer(id: string, patch: Partial<Pick<StudioTrack, 'volume' | 'mute' | 'solo'>>): void {

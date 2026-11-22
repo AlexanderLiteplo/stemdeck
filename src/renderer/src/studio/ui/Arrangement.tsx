@@ -9,16 +9,13 @@ import {
   copySelectedClips,
   cutSelectedClips,
   deleteClips,
-  deleteSong,
   duplicateClips,
   makeClipsUnique,
-  newSong,
   nudgeClips,
-  openSong,
   pasteClips,
   placeClips,
   removeTrack,
-  renameSong,
+  renameTrack,
   seekSong,
   selectClips,
   selectTrack,
@@ -33,7 +30,6 @@ import {
 } from '../actions'
 import { clampShift, trimStart } from '../clips'
 import { patternSteps, songEnd, useStudio } from '../store'
-import { SONG_TEMPLATES, type TemplateId } from '../templates'
 import {
   CHOP_PADS,
   DRUM_VOICES,
@@ -45,6 +41,7 @@ import {
 } from '../types'
 import { patternColor } from './colors'
 import { Seg } from './Param'
+import { SongMenu } from './SongMenu'
 import { usePatternDrag, type PatternDrag } from './patternDrag'
 
 const HEAD_WIDTH = 196
@@ -361,82 +358,8 @@ function Toolbar({ bars, seconds }: { bars: number; seconds: number }) {
   )
 }
 
-/** Which song is open, plus new / rename / delete. Songs save themselves; switching never loses work. */
-function SongMenu() {
-  const songId = useStudio((s) => s.songId)
-  const songName = useStudio((s) => s.songName)
-  const songs = useStudio((s) => s.songs)
-  const [naming, setNaming] = useState<string | null>(null)
-  const others = songs.filter((song) => song.id !== songId)
-
-  return (
-    <div className="song-menu">
-      <span className="instrument-name" {...tip('Song', 'Your whole track. Each lane is an instrument; each block is a clip that plays one of that instrument’s patterns. Build a loop below, then lay it out here: ＋ ADD TO SONG appends the open pattern, or drag a pattern letter onto its lane. Drag a clip to move it (Alt-drag copies); drag its right edge to loop it longer, its left edge to trim the start. Everything follows the one project BPM.')}>
-        SONG
-      </span>
-      {naming === null ? (
-        <select
-          className="song-select"
-          value={songId}
-          onChange={(e) => {
-            const value = e.target.value
-            if (value.startsWith('new:')) newSong(value.slice(4) as TemplateId)
-            else openSong(value)
-            e.target.blur()
-          }}
-          {...tip('Songs', 'Every song saves itself as you work. Pick another one to switch to it, or start a new one — blank, or from the Jungle starter to see how a full track is put together.')}
-        >
-          <optgroup label="My songs">
-            <option value={songId}>{songName}</option>
-            {others.map((song) => (
-              <option key={song.id} value={song.id}>
-                {song.name}
-              </option>
-            ))}
-          </optgroup>
-          <optgroup label="Start a new song">
-            {SONG_TEMPLATES.map((template) => (
-              <option key={template.id} value={`new:${template.id}`}>
-                ＋ {template.label}
-              </option>
-            ))}
-          </optgroup>
-        </select>
-      ) : (
-        <form
-          className="name-form"
-          onSubmit={(e) => {
-            e.preventDefault()
-            renameSong(naming)
-            setNaming(null)
-          }}
-        >
-          <input
-            autoFocus
-            value={naming}
-            onChange={(e) => setNaming(e.target.value)}
-            onKeyDown={(e) => e.key === 'Escape' && setNaming(null)}
-            onBlur={() => setNaming(null)}
-          />
-        </form>
-      )}
-      <button className="mini-btn" onClick={() => setNaming(songName)} {...tip('Rename song')}>
-        RENAME
-      </button>
-      <button
-        className="mini-btn"
-        onClick={() => {
-          if (window.confirm(`Delete “${songName}” for good? This cannot be undone.`)) deleteSong()
-        }}
-        {...tip('Delete song', 'Deletes this song permanently and opens your most recent other song.')}
-      >
-        ✕
-      </button>
-    </div>
-  )
-}
-
 function TrackHead({ track, selected, canRemove }: { track: StudioTrack; selected: boolean; canRemove: boolean }) {
+  const [naming, setNaming] = useState<string | null>(null)
   const kitName = useStudio((s) => s.kit.name)
   const sample = useStudio((s) => s.chopTitle)
   const sound = track.kind === 'drums' ? kitName : track.kind === 'chops' ? sample || 'no sample yet' : track.patch?.name
@@ -445,11 +368,44 @@ function TrackHead({ track, selected, canRemove }: { track: StudioTrack; selecte
     <div
       className={`arrange-head ${selected ? 'selected' : ''} ${track.mute ? 'muted' : ''}`}
       onClick={() => selectTrack(track.id)}
-      {...tip(track.name, 'Click to open this instrument below: its sound, and the pattern editor. Your computer keyboard plays the selected track.')}
+      {...tip(track.name, 'Click to open this instrument below: its sound, and the pattern editor. Your computer keyboard plays the selected track. Double-click the name to rename it.')}
     >
       <span className="track-icon">{TRACK_ICONS[track.kind]}</span>
       <div className="head-names">
-        <span className="head-name">{track.name}</span>
+        {naming === null ? (
+          <span
+            className="head-name"
+            onDoubleClick={(e) => {
+              e.stopPropagation()
+              setNaming(track.name)
+            }}
+          >
+            {track.name}
+          </span>
+        ) : (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault()
+              renameTrack(track.id, naming)
+              setNaming(null)
+            }}
+          >
+            <input
+              className="head-rename"
+              autoFocus
+              maxLength={16}
+              value={naming}
+              onClick={(e) => e.stopPropagation()}
+              onFocus={(e) => e.currentTarget.select()}
+              onChange={(e) => setNaming(e.target.value)}
+              onKeyDown={(e) => e.key === 'Escape' && setNaming(null)}
+              onBlur={() => {
+                renameTrack(track.id, naming)
+                setNaming(null)
+              }}
+            />
+          </form>
+        )}
         <span className="head-sound">{sound}</span>
       </div>
       <div className="head-controls" onClick={(e) => e.stopPropagation()}>
