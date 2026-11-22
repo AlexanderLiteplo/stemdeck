@@ -395,9 +395,50 @@ const ROBOT_SEEDS: PatchSeed[] = [
   }
 ]
 
+export const JUNGLE_GROUP = 'Jungle'
+
+/** The two sounds a jungle track leans on: a growling sub and a dark, slow pad. */
+const JUNGLE_SEEDS: PatchSeed[] = [
+  {
+    name: 'Reese Sub',
+    description: 'The jungle bassline: two saws detuned against each other so they growl and phase, over a clean sub, kept dark by a 24 dB filter that slowly breathes. Play long, low notes; overlap them to slide.',
+    osc1: { wave: 'sawtooth', level: 0.7 },
+    osc2: { wave: 'sawtooth', level: 0.65, octave: 0, semi: 0, detune: 19 },
+    sub: 0.75,
+    filter: { type: 'lowpass', slope: 24, cutoff: 260, resonance: 1.5, envAmount: 0.8, keyTrack: 0.2, drive: 0.35, fm: 0 },
+    ampEnv: { attack: 0.005, decay: 0.3, sustain: 0.9, release: 0.12 },
+    filterEnv: { attack: 0.01, decay: 0.5, sustain: 0.5, release: 0.2 },
+    lfo: { shape: 'sine', rate: 0.25, filter: 0.7 },
+    glide: 0.09,
+    mono: true,
+    drive: 0.3,
+    driveType: 'soft',
+    phaser: { mix: 0.2, rate: 0.12 },
+    volume: 0.85
+  },
+  {
+    name: 'Rollers Pad',
+    description: 'A dark, drifting pad for intros and breakdowns: soft detuned saws with a slow fade-in, a filter sweeping over two bars, and a long hall tail.',
+    osc1: { wave: 'sawtooth', level: 0.55 },
+    osc2: { wave: 'triangle', level: 0.4, octave: 1, semi: 0, detune: -6 },
+    noise: 0.04,
+    unison: 3,
+    spread: 16,
+    filter: { type: 'lowpass', slope: 12, cutoff: 1100, resonance: 1.8, envAmount: 1, keyTrack: 0.3, drive: 0, fm: 0 },
+    ampEnv: { attack: 0.5, decay: 1, sustain: 0.8, release: 1.6 },
+    filterEnv: { attack: 0.8, decay: 1.5, sustain: 0.5, release: 1.6 },
+    lfo: { shape: 'sine', sync: true, division: 0, filter: 0.6 },
+    phaser: { mix: 0.25, rate: 0.08 },
+    reverb: 0.6,
+    delay: 0.2,
+    volume: 0.5
+  }
+]
+
 export const SYNTH_PRESETS: SynthPatch[] = [
   ...DONDA_SEEDS.map((seed) => normalizePatch({ ...seed, group: DONDA_GROUP })),
   ...ROBOT_SEEDS.map((seed) => normalizePatch({ ...seed, group: ROBOT_GROUP })),
+  ...JUNGLE_SEEDS.map((seed) => normalizePatch({ ...seed, group: JUNGLE_GROUP })),
   normalizePatch({ group: 'Blank' })
 ]
 
@@ -480,6 +521,21 @@ const KITS: DrumKit[] = [
       perc: voice(-7, 1.4, 0.3, 0.6, 0.7, 0.35),
       crash: voice(6, 0.7, 0.9, 0.5, 0.6, 0.2),
       bass808: voice(-5, 0.7, 0.3, 0.75, 0.85, 0.15)
+    }
+  },
+  {
+    name: 'Jungle Break',
+    group: JUNGLE_GROUP,
+    description: 'Tight, fast breakbeat drums: a short punchy kick, a cracking snare that still reads as a ghost note when played soft, and crisp ride-style hats.',
+    voices: {
+      kick: voice(3, 0.55, 0.75, 0.3, 0.95, 0.04),
+      snare: voice(4, 0.85, 0.9, 0.35, 0.95, 0.14),
+      clap: voice(2, 0.6, 0.8, 0.2, 0.6, 0.15),
+      hat: voice(2, 0.7, 0.8, 0.1, 0.5, 0.05),
+      openhat: voice(1, 0.8, 0.7, 0.1, 0.5, 0.1),
+      perc: voice(7, 0.5, 0.8, 0.2, 0.6, 0.2),
+      crash: voice(0, 1.2, 0.7, 0.2, 0.6, 0.3),
+      bass808: voice(5, 0.9, 0.4, 0.3, 0.8, 0.02)
     }
   },
   {

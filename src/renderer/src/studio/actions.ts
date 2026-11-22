@@ -9,7 +9,11 @@ import { studio } from './engine'
 import { randomPatch } from './chaos'
 import { chordNotes, chordPads, type SongScale } from './chords'
 import { carve, clampShift, clipEnd, splitClip } from './clips'
+import { clearHistory, takeRedo, takeUndo, withoutHistory } from './history'
 import { DRUM_KITS, SYNTH_PRESETS, cloneKit, clonePatch, newPattern, uid } from './presets'
+import { pickSong, type SongData } from './song'
+import { dropSong, getSong, listSongs, putSong } from './songs'
+import { SONG_TEMPLATES, type TemplateId } from './templates'
 import {
   ZOOM_MAX,
   ZOOM_MIN,
@@ -79,20 +83,130 @@ function syncCycle(): void {
   studio.setCycle(cycleOn ? cycle : null)
 }
 
+/** Push the whole song to the engine: sounds, kit, tempo, sample settings, tracks and clips. */
+function syncSong(): void {
+  const s = get()
+  for (const t of s.tracks) if (t.patch) studio.setPatch(t.id, t.patch)
+  studio.setKit(s.kit)
+  studio.setBpm(s.bpm)
+  studio.setSwing(s.swing)
+  studio.setChopSettings(s.chop)
+  syncProject()
+  syncMixer()
+  syncCycle()
+}
+
+/**
+ * Replace the song in the store and the engine (undo, redo, opening a song).
+ * Selections that no longer exist are dropped, and the chopper sample is
+ * reloaded when the song uses a different one.
+ */
+function applySong(data: SongData): void {
+  releaseAllKeys()
+  const before = get().chop
+  const clipIds = new Set(data.clips.map((c) => c.id))
+  withoutHistory(() =>
+    set({
+      ...data,
+      selectedTrack: data.tracks.some((t) => t.id === get().selectedTrack) ? get().selectedTrack : data.tracks[0].id,
+      selectedClips: get().selectedClips.filter((id) => clipIds.has(id))
+    })
+  )
+  syncSong()
+  const { trackId, source } = data.chop
+  if (trackId !== before.trackId || source !== before.source) {
+    if (trackId) {
+      void loadChopTrack(trackId, source, true)
+    } else {
+      chopData.buffer = null
+      chopData.peaks = null
+      studio.setChopBuffer(null)
+    }
+  }
+}
+
+// ---------- Undo / redo ----------
+
+export function undo(): void {
+  const snapshot = takeUndo()
+  if (snapshot) applySong(snapshot)
+  else showToast('Nothing to undo')
+}
+
+export function redo(): void {
+  const snapshot = takeRedo()
+  if (snapshot) applySong(snapshot)
+  else showToast('Nothing to redo')
+}
+
+// ---------- Songs ----------
+
+/** Save the open song into the library (it is otherwise only in the autosaved working state). */
+function stashSong(): void {
+  const s = get()
+  if (!putSong(s.songId, s.songName, pickSong(s))) {
+    showToast('Could not save the song to the library — storage is full')
+  }
+}
+
+/** Swap the open song for another one. History and playback don't carry over. */
+function switchSong(songId: string, songName: string, data: SongData): void {
+  if (studio.playing) stopTransport()
+  applySong(data)
+  clearHistory()
+  studio.seek(0)
+  set({ songId, songName, songPos: 0, selectedClips: [], songs: listSongs() })
+}
+
+/** A name not used by any other song: "Jungle starter", "Jungle starter 2", … */
+function freeSongName(base: string): string {
+  const taken = new Set([get().songName, ...listSongs().map((song) => song.name)])
+  if (!taken.has(base)) return base
+  for (let n = 2; ; n++) if (!taken.has(`${base} ${n}`)) return `${base} ${n}`
+}
+
+/** Start a new song from a template. The open song is saved to the library first, so nothing is lost. */
+export function newSong(templateId: TemplateId): void {
+  const template = SONG_TEMPLATES.find((t) => t.id === templateId) ?? SONG_TEMPLATES[0]
+  const previous = get().songName
+  stashSong()
+  switchSong(uid('song'), freeSongName(template.name), template.build())
+  showToast(`New song from “${template.label}” — “${previous}” is saved in the song menu`)
+}
+
+export function openSong(id: string): void {
+  if (id === get().songId) return
+  const song = getSong(id)
+  if (!song) {
+    showToast('That song could not be opened')
+    return
+  }
+  stashSong()
+  switchSong(id, song.name, song.data)
+}
+
+export function renameSong(name: string): void {
+  const songName = name.trim()
+  if (songName) set({ songName })
+}
+
+/** Delete the open song for good and open the most recent other one (or a blank song). */
+export function deleteSong(): void {
+  const doomed = get().songId
+  const next = listSongs().find((song) => song.id !== doomed)
+  const saved = next ? getSong(next.id) : null
+  dropSong(doomed)
+  if (next && saved) switchSong(next.id, saved.name, saved.data)
+  else switchSong(uid('song'), 'Untitled', SONG_TEMPLATES[0].build())
+}
+
 export function initStudio(): void {
   if (studio.ready) return
   studio.init(engine.ctx, engine.master)
   const s = get()
-  for (const t of s.tracks) if (t.patch) studio.setPatch(t.id, t.patch)
-  studio.setKit(s.kit)
-  syncProject()
-  syncMixer()
-  studio.setBpm(s.bpm)
-  studio.setSwing(s.swing)
+  syncSong()
   studio.setMetronome(s.metronome)
-  studio.setChopSettings(s.chop)
   studio.setMode(s.mode)
-  syncCycle()
   studio.seek(s.songPos)
   studio.onSongEnd = () => set({ playing: false, recordArm: false })
   if (s.chop.trackId) void loadChopTrack(s.chop.trackId, s.chop.source, true)
@@ -216,8 +330,13 @@ export function setMode(mode: PlayMode): void {
 
 /** Move the song playhead (also while playing). Switches to SONG mode: you are pointing at the timeline. */
 export function seekSong(step: number): void {
-  const songPos = Math.max(0, Math.round(step))
   setMode('song')
+  movePlayhead(step)
+}
+
+/** Move the song playhead without changing play mode (where paste and SPLIT act). */
+export function movePlayhead(step: number): void {
+  const songPos = Math.max(0, Math.round(step))
   studio.seek(songPos)
   set({ songPos })
 }
@@ -398,14 +517,19 @@ export function clearPattern(): void {
   commitPattern(newPattern(p.kind, p.trackId, p.name, p.bars, p.id))
 }
 
+/** Point a track's editor at a pattern. Looking around is not an edit, so it is not an undo step. */
+function showPattern(trackId: string, patternId: string): void {
+  withoutHistory(() => updateTrack(trackId, { patternId }))
+  syncProject()
+}
+
 /** Open one of the selected track's patterns in the editor (it is also what LOOP mode plays). */
 export function openPattern(patternId: string): void {
   const s = get()
   const pattern = s.patterns[patternId]
   if (!pattern || pattern.trackId !== s.selectedTrack) return
   releaseAllKeys()
-  updateTrack(s.selectedTrack, { patternId })
-  syncProject()
+  showPattern(s.selectedTrack, patternId)
 }
 
 /** First unused letter name among a track's patterns: A, B, … Z, then A2, B2, … */
@@ -486,26 +610,43 @@ export function selectClips(ids: string[]): void {
   selectTrack(clip.trackId)
   if (get().tracks.find((t) => t.id === clip.trackId)?.patternId !== clip.patternId) {
     releaseAllKeys()
-    updateTrack(clip.trackId, { patternId: clip.patternId })
-    syncProject()
+    showPattern(clip.trackId, clip.patternId)
   }
 }
 
-/** Drop the track's open pattern onto the timeline at `start`, one pattern-length long. */
-export function addClip(trackId: string, start: number): void {
+/**
+ * Drop a pattern onto its track's lane at `start`, one pattern-length long.
+ * Defaults to the pattern open in that track's editor.
+ */
+export function addClip(trackId: string, start: number, patternId?: string): void {
   const s = get()
   const track = s.tracks.find((t) => t.id === trackId)
-  if (!track) return
+  const pattern = s.patterns[patternId ?? track?.patternId ?? '']
+  if (!track || !pattern || pattern.kind !== track.kind) return
   const clip: Clip = {
     id: newClipId(),
     trackId,
-    patternId: track.patternId,
+    patternId: pattern.id,
     start: Math.max(0, start),
-    length: patternSteps(s.patterns[track.patternId]),
+    length: patternSteps(pattern),
     offset: 0
   }
   commitClips(carve(s.clips, [clip], newClipId))
   selectClips([clip.id])
+}
+
+/**
+ * The one-click way to get a pattern into the song: append it to its track,
+ * right after that track's last clip (on a bar line).
+ */
+export function addPatternToSong(patternId: string = selTrack(get()).patternId): void {
+  const s = get()
+  const pattern = s.patterns[patternId]
+  if (!pattern) return
+  const end = s.clips.filter((c) => c.trackId === pattern.trackId).reduce((max, c) => Math.max(max, clipEnd(c)), 0)
+  const start = Math.ceil(end / STEPS_PER_BAR) * STEPS_PER_BAR
+  addClip(pattern.trackId, start, pattern.id)
+  showToast(`Pattern ${pattern.name} added to the song at bar ${start / STEPS_PER_BAR + 1}`)
 }
 
 /** Replace clips with edited versions of themselves (move / trim); they overwrite what they land on. */
@@ -556,6 +697,41 @@ export function splitClipsAt(at: number, onlyIds?: string[]): void {
     return halves
   })
   commitClips(clips, selected)
+}
+
+/** Clips copied with ⌘C / ⌘X, as they were when copied. */
+let clipboard: Clip[] = []
+
+export function copySelectedClips(): void {
+  const s = get()
+  const picked = s.clips.filter((c) => s.selectedClips.includes(c.id))
+  if (!picked.length) return
+  clipboard = picked
+  showToast(picked.length === 1 ? 'Clip copied — ⌘V pastes it at the playhead' : `${picked.length} clips copied — ⌘V pastes them at the playhead`)
+}
+
+export function cutSelectedClips(): void {
+  copySelectedClips()
+  deleteClips()
+}
+
+/**
+ * Paste the copied clips at `at`, keeping their spacing and tracks, then move
+ * the playhead to the end of what was pasted so pressing ⌘V again continues
+ * the row.
+ */
+export function pasteClips(at: number): void {
+  const s = get()
+  // The song may have changed since the copy: skip clips whose track or pattern is gone.
+  const usable = clipboard.filter((c) => s.patterns[c.patternId] && s.tracks.some((t) => t.id === c.trackId))
+  if (!usable.length) {
+    showToast('Nothing to paste — select a clip and press ⌘C first')
+    return
+  }
+  const shift = Math.max(0, at) - Math.min(...usable.map((c) => c.start))
+  const pasted = usable.map((c) => ({ ...c, start: c.start + shift }))
+  copyClips(pasted)
+  movePlayhead(Math.max(...pasted.map(clipEnd)))
 }
 
 export function deleteClips(ids: string[] = get().selectedClips): void {
@@ -728,7 +904,10 @@ export async function loadChopTrack(
       startBeat: sameTrack || restoring ? prev.startBeat : 0
     }
     studio.setChopSettings(chop)
-    set({ chop, chopTitle: track.name, chopLoading: false })
+    // Reloading a sample for a restored song is not an edit, so it must not become an undo step.
+    const commit = (): void => set({ chop, chopTitle: track.name, chopLoading: false })
+    if (restoring) withoutHistory(commit)
+    else commit()
   } catch (err) {
     set({ chopLoading: false })
     if (!restoring) showToast(`Couldn't load sample: ${(err as Error).message}`)
