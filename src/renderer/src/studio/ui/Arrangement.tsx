@@ -1,16 +1,24 @@
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { Fader } from '../../components/Fader'
 import { tip } from '../../components/TooltipLayer'
+import { showToast } from '../../state/store'
 import {
   addClip,
   addSynthTrack,
   copyClips,
+  copySelectedClips,
+  cutSelectedClips,
   deleteClips,
+  deleteSong,
   duplicateClips,
   makeClipsUnique,
+  newSong,
   nudgeClips,
+  openSong,
+  pasteClips,
   placeClips,
   removeTrack,
+  renameSong,
   seekSong,
   selectClips,
   selectTrack,
@@ -25,6 +33,7 @@ import {
 } from '../actions'
 import { clampShift, trimStart } from '../clips'
 import { patternSteps, songEnd, useStudio } from '../store'
+import { SONG_TEMPLATES, type TemplateId } from '../templates'
 import {
   CHOP_PADS,
   DRUM_VOICES,
@@ -36,6 +45,7 @@ import {
 } from '../types'
 import { patternColor } from './colors'
 import { Seg } from './Param'
+import { usePatternDrag, type PatternDrag } from './patternDrag'
 
 const HEAD_WIDTH = 196
 /** Pixels at each end of a clip that grab its edge instead of its body. */
@@ -64,6 +74,23 @@ function playheadStep(): number {
   return snapTo(live >= 0 ? live : songPos, snap)
 }
 
+/**
+ * A pattern chip was released: if it is over its own track's lane, drop the
+ * pattern there as a clip. Anywhere else the drag is simply cancelled.
+ */
+export function dropPatternOnTimeline(drag: PatternDrag): void {
+  const lane = document.elementFromPoint(drag.x, drag.y)?.closest<HTMLElement>('.lane')
+  if (!lane) return
+  const { zoom, snap, tracks } = useStudio.getState()
+  if (lane.dataset.track !== drag.trackId) {
+    const owner = tracks.find((t) => t.id === drag.trackId)?.name ?? 'its own'
+    showToast(`Pattern ${drag.name} belongs to the ${owner} track — drop it on that lane`)
+    return
+  }
+  const x = drag.x - lane.getBoundingClientRect().left
+  addClip(drag.trackId, snapTo(pxToSteps(x, zoom), snap, Math.floor), drag.patternId)
+}
+
 type ClipDrag =
   | { kind: 'move'; id: string; originX: number; copy: boolean; delta: number; collapse: boolean }
   | { kind: 'trim-start' | 'trim-end'; id: string; originX: number; delta: number }
@@ -83,8 +110,22 @@ export function Arrangement() {
   const tool = useStudio((s) => s.tool)
   const bpm = useStudio((s) => s.bpm)
   const focused = useStudio((s) => s.focus === 'arrange')
+  const dropTrack = usePatternDrag((s) => s.drag?.trackId)
   const [drag, setDrag] = useState<ClipDrag | null>(null)
   const scroller = useRef<HTMLDivElement>(null)
+
+  // When one clip becomes selected off-screen (ADD TO SONG, paste), bring it into view.
+  const loneClip = selected.length === 1 ? selected[0] : null
+  useEffect(() => {
+    const view = scroller.current
+    const clip = useStudio.getState().clips.find((c) => c.id === loneClip)
+    if (!view || !clip) return
+    const { zoom } = useStudio.getState()
+    const left = stepsToPx(clip.start, zoom)
+    const right = stepsToPx(clip.start + clip.length, zoom)
+    const visible = view.clientWidth - HEAD_WIDTH
+    if (left < view.scrollLeft || right > view.scrollLeft + visible) view.scrollLeft = Math.max(0, left - 80)
+  }, [loneClip])
 
   const end = songEnd(clips)
   const bars = Math.max(MIN_BARS, Math.ceil(end / STEPS_PER_BAR) + SPARE_BARS)
@@ -161,7 +202,8 @@ export function Arrangement() {
             <div className={`arrange-row ${track.id === selectedTrack ? 'selected' : ''}`} key={track.id}>
               <TrackHead track={track} selected={track.id === selectedTrack} canRemove={track.kind === 'synth' && tracks.filter((t) => t.kind === 'synth').length > 1} />
               <div
-                className={`lane ${tool === 'split' ? 'cutting' : ''}`}
+                className={`lane ${tool === 'split' ? 'cutting' : ''} ${dropTrack === undefined ? '' : dropTrack === track.id ? 'drop-ok' : 'drop-no'}`}
+                data-track={track.id}
                 style={{ width, backgroundSize: `${zoom}px 100%, ${zoom / 4}px 100%` }}
                 onPointerDown={(e) => {
                   if (e.button !== 0) return
@@ -193,7 +235,7 @@ export function Arrangement() {
                     <ClipView key={`ghost-${clip.id}`} clip={clip} pattern={patterns[clip.patternId]} zoom={zoom} selected ghost />
                   ))}
                 {!clips.some((c) => c.trackId === track.id) && (
-                  <span className="lane-hint">Double-click to drop pattern {patterns[track.patternId]?.name} here</span>
+                  <span className="lane-hint">Empty — press ＋ ADD TO SONG below, or double-click here to drop pattern {patterns[track.patternId]?.name}</span>
                 )}
               </div>
             </div>
@@ -244,6 +286,9 @@ function useArrangeKeys(): void {
       const mod = e.metaKey || e.ctrlKey
       const handled = (): void => e.preventDefault()
       if (mod && e.code === 'KeyD') return handled(), duplicateClips()
+      if (mod && e.code === 'KeyC') return handled(), copySelectedClips()
+      if (mod && e.code === 'KeyX') return handled(), cutSelectedClips()
+      if (mod && e.code === 'KeyV') return handled(), pasteClips(playheadStep())
       if (mod && (e.code === 'KeyT' || e.code === 'KeyE')) return handled(), splitClipsAt(playheadStep())
       if (mod && e.code === 'KeyA') return handled(), selectClips(s.clips.map((c) => c.id))
       if (mod || s.selectedClips.length === 0) return
@@ -267,9 +312,7 @@ function Toolbar({ bars, seconds }: { bars: number; seconds: number }) {
 
   return (
     <div className="arrange-bar">
-      <span className="instrument-name" {...tip('Song', 'Your whole track. Each lane is an instrument; each block is a clip that plays one of that instrument’s patterns. Build a loop below, then lay it out here. Double-click an empty spot to drop the track’s open pattern; drag a clip to move it (Alt-drag copies); drag its right edge to loop it longer, its left edge to trim the start. Everything follows the one project BPM.')}>
-        SONG
-      </span>
+      <SongMenu />
       <Seg
         options={['select', 'split'] as const}
         labels={{ select: '↖ MOVE', split: '✂ CUT' }}
@@ -290,6 +333,12 @@ function Toolbar({ bars, seconds }: { bars: number; seconds: number }) {
         <button className="mini-btn" onClick={() => splitClipsAt(playheadStep())} {...tip('Split at playhead · ⌘T', 'Cuts the selected clips (or, with nothing selected, every clip) at the playhead.')}>
           SPLIT
         </button>
+        <button className="mini-btn" disabled={none} onClick={copySelectedClips} {...tip('Copy · ⌘C', 'Copies the selected clips. ⌘V pastes them at the playhead (click the ruler to move it); ⌘X cuts.')}>
+          COPY
+        </button>
+        <button className="mini-btn" onClick={() => pasteClips(playheadStep())} {...tip('Paste · ⌘V', 'Pastes the copied clips at the playhead, then moves the playhead to the end of them — so pressing it again keeps laying them end to end.')}>
+          PASTE
+        </button>
         <button className="mini-btn" disabled={none} onClick={duplicateClips} {...tip('Duplicate · ⌘D', 'Repeats the selected clips right after themselves. Select a whole section and press it a few times to build out a song.')}>
           DUPLICATE
         </button>
@@ -308,6 +357,81 @@ function Toolbar({ bars, seconds }: { bars: number; seconds: number }) {
         <button className="mini-btn" onClick={() => setZoom(zoom / 1.3)}>−</button>
         <button className="mini-btn" onClick={() => setZoom(zoom * 1.3)}>＋</button>
       </span>
+    </div>
+  )
+}
+
+/** Which song is open, plus new / rename / delete. Songs save themselves; switching never loses work. */
+function SongMenu() {
+  const songId = useStudio((s) => s.songId)
+  const songName = useStudio((s) => s.songName)
+  const songs = useStudio((s) => s.songs)
+  const [naming, setNaming] = useState<string | null>(null)
+  const others = songs.filter((song) => song.id !== songId)
+
+  return (
+    <div className="song-menu">
+      <span className="instrument-name" {...tip('Song', 'Your whole track. Each lane is an instrument; each block is a clip that plays one of that instrument’s patterns. Build a loop below, then lay it out here: ＋ ADD TO SONG appends the open pattern, or drag a pattern letter onto its lane. Drag a clip to move it (Alt-drag copies); drag its right edge to loop it longer, its left edge to trim the start. Everything follows the one project BPM.')}>
+        SONG
+      </span>
+      {naming === null ? (
+        <select
+          className="song-select"
+          value={songId}
+          onChange={(e) => {
+            const value = e.target.value
+            if (value.startsWith('new:')) newSong(value.slice(4) as TemplateId)
+            else openSong(value)
+            e.target.blur()
+          }}
+          {...tip('Songs', 'Every song saves itself as you work. Pick another one to switch to it, or start a new one — blank, or from the Jungle starter to see how a full track is put together.')}
+        >
+          <optgroup label="My songs">
+            <option value={songId}>{songName}</option>
+            {others.map((song) => (
+              <option key={song.id} value={song.id}>
+                {song.name}
+              </option>
+            ))}
+          </optgroup>
+          <optgroup label="Start a new song">
+            {SONG_TEMPLATES.map((template) => (
+              <option key={template.id} value={`new:${template.id}`}>
+                ＋ {template.label}
+              </option>
+            ))}
+          </optgroup>
+        </select>
+      ) : (
+        <form
+          className="name-form"
+          onSubmit={(e) => {
+            e.preventDefault()
+            renameSong(naming)
+            setNaming(null)
+          }}
+        >
+          <input
+            autoFocus
+            value={naming}
+            onChange={(e) => setNaming(e.target.value)}
+            onKeyDown={(e) => e.key === 'Escape' && setNaming(null)}
+            onBlur={() => setNaming(null)}
+          />
+        </form>
+      )}
+      <button className="mini-btn" onClick={() => setNaming(songName)} {...tip('Rename song')}>
+        RENAME
+      </button>
+      <button
+        className="mini-btn"
+        onClick={() => {
+          if (window.confirm(`Delete “${songName}” for good? This cannot be undone.`)) deleteSong()
+        }}
+        {...tip('Delete song', 'Deletes this song permanently and opens your most recent other song.')}
+      >
+        ✕
+      </button>
     </div>
   )
 }
@@ -423,7 +547,7 @@ function Ruler({ bars, zoom, snap }: { bars: number; zoom: number; snap: number 
   )
 }
 
-/** Song playhead, moved outside React; flips the view forward when it runs off the right edge. */
+/** Song playhead, moved outside React; flips the view forward when it runs off the right edge while playing. */
 function SongPlayhead({ zoom, scroller }: { zoom: number; scroller: React.RefObject<HTMLDivElement | null> }) {
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
@@ -433,11 +557,9 @@ function SongPlayhead({ zoom, scroller }: { zoom: number; scroller: React.RefObj
       const el = ref.current
       if (!el) return
       const { mode, songPos, playing } = useStudio.getState()
-      if (mode !== 'song') {
-        el.style.display = 'none'
-        return
-      }
-      const live = playing ? transportPosition() : -1
+      // In LOOP mode the timeline is not what is playing, but the playhead still marks where paste and SPLIT act.
+      el.classList.toggle('idle', mode !== 'song')
+      const live = playing && mode === 'song' ? transportPosition() : -1
       const x = stepsToPx(live >= 0 ? live : songPos, zoom)
       el.style.display = 'block'
       el.style.transform = `translateX(${HEAD_WIDTH + x}px)`

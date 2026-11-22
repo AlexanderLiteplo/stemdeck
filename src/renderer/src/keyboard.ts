@@ -2,7 +2,8 @@
  * Global computer-keyboard routing.
  *  Decks view:  1..0 = deck A section keys, Q..P = deck B section keys
  *               (Shift = re-save at playhead, Alt = clear).
- *  Studio view: Space = play/stop, Tab = next track, and the selected track's
+ *  Studio view: Space = play/stop, Tab = next track, ⌘Z / ⇧⌘Z = undo / redo,
+ *               Home = playhead to bar 1, and the selected track's
  *               instrument: GarageBand-style musical typing for the synth
  *               (or, in CHORDS mode, one in-key chord per A..L key; Shift =
  *               7th chord; C toggles the mode), a 4×4 pad grid
@@ -15,11 +16,14 @@ import {
   chordUp,
   cycleTrack,
   hitPad,
+  movePlayhead,
+  redo,
   setKeyMode,
   shiftKeyOctave,
   synthDown,
   synthUp,
-  togglePlay as toggleStudio
+  togglePlay as toggleStudio,
+  undo
 } from './studio/actions'
 import { selTrack, useStudio } from './studio/store'
 
@@ -68,8 +72,20 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 function onKeyDown(e: KeyboardEvent): void {
-  if (e.metaKey || e.ctrlKey || isTyping(e.target)) return
+  if (isTyping(e.target)) return
   const studio = useStudio.getState()
+
+  if (e.metaKey || e.ctrlKey) {
+    // Undo / redo for the song. Other ⌘ shortcuts belong to the timeline and the piano roll.
+    if (studio.view !== 'studio' || e.altKey) return
+    const redoKey = (e.code === 'KeyZ' && e.shiftKey) || e.code === 'KeyY'
+    if (redoKey || e.code === 'KeyZ') {
+      e.preventDefault()
+      if (redoKey) redo()
+      else undo()
+    }
+    return
+  }
 
   if (studio.view === 'decks') {
     for (let deck = 0; deck < 2; deck++) {
@@ -91,6 +107,11 @@ function onKeyDown(e: KeyboardEvent): void {
   if (e.code === 'Tab') {
     e.preventDefault()
     if (!e.repeat) cycleTrack()
+    return
+  }
+  if (e.code === 'Home') {
+    e.preventDefault()
+    movePlayhead(0)
     return
   }
 

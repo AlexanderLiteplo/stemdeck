@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { engine } from '../../audio/engine'
+import { showToast } from '../../state/store'
 import { addNote, layNotes, placeNotes, setNotes } from '../actions'
 import { chordNotes, chordPads } from '../chords'
 import { studio } from '../engine'
@@ -34,6 +35,29 @@ function isTyping(target: EventTarget | null): boolean {
 }
 
 type Zone = 'move' | 'start' | 'end'
+
+/**
+ * Notes copied with ⌘C / ⌘X. `inPlace` means the next paste lands on the
+ * original steps (after a cut, or when pasting into a different pattern);
+ * otherwise it lands right after them, so repeated ⌘V walks along the bar.
+ */
+let noteClipboard: { patternId: string; notes: SynthNote[]; inPlace: boolean } | null = null
+
+/** `source` shifted to start right after itself, on the next beat. Notes that would start past the end are dropped. */
+function placeAfter(source: SynthNote[], steps: number): SynthNote[] {
+  const first = Math.min(...source.map((n) => n.step))
+  const last = Math.max(...source.map((n) => n.step + n.length))
+  const shift = Math.max(4, Math.ceil((last - first) / 4) * 4)
+  return fitNotes(
+    source.map((n) => ({ ...n, step: n.step + shift })),
+    steps
+  )
+}
+
+/** Keep only the notes that start inside the pattern, trimmed to its end. */
+function fitNotes(notes: SynthNote[], steps: number): SynthNote[] {
+  return notes.filter((n) => n.step < steps).map((n) => ({ ...n, length: Math.min(n.length, steps - n.step) }))
+}
 
 /**
  * Move or trim every note in `picked` by `dStep` 16ths / `dPitch` semitones,
@@ -104,8 +128,8 @@ export function PianoRoll({ steps }: { steps: number }) {
   const chordLength = Math.max(4, steps / 4)
 
   // Latest values for the window/drop listeners registered once below.
-  const live = useRef({ notes, selected, steps, rollBase, chordLength })
-  live.current = { notes, selected, steps, rollBase, chordLength }
+  const live = useRef({ notes, selected, steps, rollBase, chordLength, patternId })
+  live.current = { notes, selected, steps, rollBase, chordLength, patternId }
 
   /** Pointer -> grid position. Works outside the roll too (while captured). */
   const locate = (clientX: number, clientY: number) => {
@@ -183,7 +207,7 @@ export function PianoRoll({ steps }: { steps: number }) {
   // A selection belongs to one pattern: opening another must not carry it over.
   useEffect(() => setSelected(new Set()), [patternId])
 
-  // Editing keys: Delete, Escape, ⌘A, arrows — only while the editor (not the timeline) has focus.
+  // Editing keys: Delete, Escape, ⌘A/C/X/V/D, arrows — only while the editor (not the timeline) has focus.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (isTyping(e.target) || drag.current || useStudio.getState().focus !== 'editor') return
@@ -194,10 +218,49 @@ export function PianoRoll({ steps }: { steps: number }) {
         setSelected(new Set(notes.filter((n) => n.step < steps).map(keyOf)))
         return
       }
-      if (mod || selected.size === 0) return
       const picked = notes.filter((n) => selected.has(keyOf(n)))
-      if (picked.length === 0) return
       const rest = notes.filter((n) => !selected.has(keyOf(n)))
+      /** Write `added` on top of `base` and leave them selected, ready to drag or nudge. */
+      const land = (base: SynthNote[], added: SynthNote[]): boolean => {
+        if (added.length === 0) {
+          showToast('No room for that here — make the pattern longer (2 or 4 BARS)')
+          return false
+        }
+        setNotes(layNotes(base, added))
+        setSelected(new Set(added.map(keyOf)))
+        preview(added.map((n) => n.note))
+        return true
+      }
+      if (mod && e.code === 'KeyV') {
+        e.preventDefault()
+        const clip = noteClipboard
+        if (!clip) {
+          showToast('Nothing to paste — select some notes and press ⌘C first')
+          return
+        }
+        const { patternId } = live.current
+        const inPlace = clip.inPlace || clip.patternId !== patternId
+        const pasted = inPlace ? fitNotes(clip.notes, steps) : placeAfter(clip.notes, steps)
+        if (land(notes, pasted)) noteClipboard = { patternId, notes: pasted, inPlace: false }
+        return
+      }
+      if (mod && picked.length > 0 && (e.code === 'KeyC' || e.code === 'KeyX')) {
+        e.preventDefault()
+        const cut = e.code === 'KeyX'
+        noteClipboard = { patternId: live.current.patternId, notes: picked, inPlace: cut }
+        if (cut) {
+          setNotes(rest)
+          setSelected(new Set())
+        }
+        showToast(`${picked.length} note${picked.length === 1 ? '' : 's'} ${cut ? 'cut' : 'copied'} — ⌘V pastes`)
+        return
+      }
+      if (mod && picked.length > 0 && e.code === 'KeyD') {
+        e.preventDefault()
+        land(notes, placeAfter(picked, steps))
+        return
+      }
+      if (mod || picked.length === 0) return
       if (e.code === 'Delete' || e.code === 'Backspace') {
         e.preventDefault()
         setNotes(rest)

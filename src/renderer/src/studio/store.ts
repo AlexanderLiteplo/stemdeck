@@ -1,14 +1,14 @@
 import { create } from 'zustand'
-import { DRUM_KITS, cloneKit, defaultChopSettings, demoProject, newPattern, uid, type Project } from './presets'
+import { demoProject, newPattern, uid } from './presets'
 import { DEFAULT_PATCH, normalizePatch } from './patch'
+import { sanitizeSong, type SongData } from './song'
+import { listSongs, type SongMeta } from './songs'
 import {
   CHOP_TRACK,
   DRUM_TRACK,
   STEPS_PER_BAR,
   type ChopPattern,
-  type ChopSettings,
   type Clip,
-  type CycleRange,
   type DrumKit,
   type DrumPattern,
   type DrumVoiceId,
@@ -18,7 +18,6 @@ import {
   type SynthNote,
   type SynthPatch
 } from './types'
-import type { SongScale } from './chords'
 
 export type AppView = 'decks' | 'studio'
 /** Timeline pointer tool: select/move clips, or cut them where you click. */
@@ -29,13 +28,16 @@ export type FocusArea = 'arrange' | 'editor'
 export const ZOOM_MIN = 20
 export const ZOOM_MAX = 140
 
-export interface StudioState extends Project {
+export interface StudioState extends SongData {
   view: AppView
+  /** The open song's id in the song library, and its name. */
+  songId: string
+  songName: string
+  /** The other songs in the library (the open one is saved there when you switch away). */
+  songs: SongMeta[]
   /** Id of the track whose editor is open — also what the computer keyboard plays. */
   selectedTrack: string
   selectedClips: string[]
-  bpm: number
-  swing: number
   metronome: boolean
   playing: boolean
   /** Live playing gets written into the pattern while the transport runs. */
@@ -43,9 +45,6 @@ export interface StudioState extends Project {
   mode: PlayMode
   /** Song position (steps) where playback starts and the playhead rests. */
   songPos: number
-  /** Stretch of the song that repeats while `cycleOn`. */
-  cycle: CycleRange | null
-  cycleOn: boolean
   /** Timeline grid in steps: 16 = bars, 4 = beats. */
   snap: number
   /** Timeline zoom, pixels per bar. */
@@ -53,11 +52,8 @@ export interface StudioState extends Project {
   tool: ArrangeTool
   focus: FocusArea
   userPatches: SynthPatch[]
-  kit: DrumKit
   userKits: DrumKit[]
   selectedDrum: DrumVoiceId
-  chop: ChopSettings
-  chopTitle: string
   chopLoading: boolean
   /** Octave of the computer-keyboard "A" key (C4 = 4). */
   keyOctave: number
@@ -67,9 +63,6 @@ export interface StudioState extends Project {
   heldNotes: number[]
   /** What the synth's computer keys play: single notes, or one chord per key. */
   keyMode: KeyMode
-  /** Song key root for chord pads, 0 = C .. 11 = B. */
-  songKey: number
-  songScale: SongScale
   /** Chord pad currently held, for the chord readout and pad highlight. */
   activeChord: ActiveChord | null
 }
@@ -124,6 +117,8 @@ const LEGACY_KEY = 'stemdeck.studio.v1'
 
 const PERSISTED = [
   'view',
+  'songId',
+  'songName',
   'selectedTrack',
   'bpm',
   'swing',
@@ -159,17 +154,6 @@ function readJson(key: string): Record<string, unknown> | null {
   } catch {
     return null
   }
-}
-
-/** A project is only usable when every track and clip points at a pattern of the right kind. */
-function validProject(value: Partial<Project>): value is Project {
-  const { tracks, patterns, clips } = value
-  if (!Array.isArray(tracks) || tracks.length === 0 || !patterns || !Array.isArray(clips)) return false
-  const kinds = new Map(tracks.map((t) => [t.id, t.kind]))
-  return (
-    tracks.every((t) => patterns[t.patternId]?.kind === t.kind) &&
-    clips.every((c) => kinds.has(c.trackId) && patterns[c.patternId]?.kind === kinds.get(c.trackId))
-  )
 }
 
 interface LegacyPattern {
@@ -229,65 +213,52 @@ function loadPersisted(): Partial<Persisted> {
 }
 
 const saved = loadPersisted()
-const project: Project = validProject(saved)
-  ? {
-      // Sounds saved by older versions lack the newer modules; normalizing switches those off.
-      tracks: saved.tracks.map((t) => ({
-        ...t,
-        solo: t.solo ?? false,
-        ...(t.kind === 'synth' ? { patch: normalizePatch(t.patch) } : {})
-      })),
-      patterns: saved.patterns,
-      clips: saved.clips
-    }
-  : demoProject()
+const song = sanitizeSong(saved, demoProject) as SongData
 
 export const useStudio = create<StudioState>(() => ({
+  ...song,
   view: saved.view ?? 'decks',
-  selectedTrack: project.tracks.some((t) => t.id === saved.selectedTrack)
+  songId: saved.songId ?? uid('song'),
+  songName: saved.songName ?? 'My first song',
+  songs: listSongs(),
+  selectedTrack: song.tracks.some((t) => t.id === saved.selectedTrack)
     ? (saved.selectedTrack as string)
-    : project.tracks[0].id,
+    : song.tracks[0].id,
   selectedClips: [],
-  bpm: saved.bpm ?? 140,
-  swing: saved.swing ?? 0,
   metronome: saved.metronome ?? false,
   playing: false,
   recordArm: false,
-  ...project,
   mode: saved.mode ?? 'loop',
   songPos: saved.songPos ?? 0,
-  cycle: saved.cycle ?? null,
-  cycleOn: saved.cycleOn ?? false,
   snap: saved.snap ?? STEPS_PER_BAR,
   zoom: saved.zoom ?? 56,
   tool: 'select',
   focus: 'editor',
   userPatches: (saved.userPatches ?? []).map(normalizePatch),
-  kit: saved.kit ?? cloneKit(DRUM_KITS[0]),
   userKits: saved.userKits ?? [],
   selectedDrum: 'kick',
-  chop: { ...defaultChopSettings(), ...saved.chop },
-  chopTitle: saved.chopTitle ?? '',
   chopLoading: false,
   keyOctave: saved.keyOctave ?? 4,
   rollBase: saved.rollBase ?? 48,
   heldNotes: [],
   keyMode: saved.keyMode ?? 'notes',
-  songKey: saved.songKey ?? 0,
-  songScale: saved.songScale ?? 'minor',
   activeChord: null
 }))
 
+function persist(): void {
+  const s = useStudio.getState()
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(Object.fromEntries(PERSISTED.map((key) => [key, s[key]]))))
+  } catch {
+    // storage full/unavailable — the session still works, it just won't persist
+  }
+}
+
 // Debounced persistence — patterns change on every click while painting.
 let saveTimer: ReturnType<typeof setTimeout> | null = null
-useStudio.subscribe((s) => {
+useStudio.subscribe(() => {
   if (saveTimer) clearTimeout(saveTimer)
-  saveTimer = setTimeout(() => {
-    const data = Object.fromEntries(PERSISTED.map((key) => [key, s[key]]))
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(data))
-    } catch {
-      // storage full/unavailable — the session still works, it just won't persist
-    }
-  }, 400)
+  saveTimer = setTimeout(persist, 400)
 })
+// Don't lose the last edit when the window closes inside the debounce.
+window.addEventListener('pagehide', persist)

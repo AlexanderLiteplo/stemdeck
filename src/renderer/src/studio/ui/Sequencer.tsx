@@ -1,7 +1,8 @@
-import { useMemo } from 'react'
+import { useMemo, useRef } from 'react'
 import { tip } from '../../components/TooltipLayer'
 import {
   addPattern,
+  addPatternToSong,
   clearPattern,
   deleteOpenPattern,
   duplicateBars,
@@ -15,10 +16,12 @@ import {
 } from '../actions'
 import { selChops, selDrums, selPattern, selTrack, useStudio } from '../store'
 import { CHOP_PADS, DRUM_VOICES, STEPS_PER_BAR } from '../types'
+import { dropPatternOnTimeline } from './Arrangement'
 import { PAD_COLORS, patternColor } from './colors'
 import { DRUM_INFO } from './DrumEditor'
 import { Seg } from './Param'
 import { PianoRoll } from './PianoRoll'
+import { usePatternDrag } from './patternDrag'
 import { Playhead } from './Playhead'
 import { noteName } from './SynthEditor'
 
@@ -70,12 +73,21 @@ export function Sequencer() {
   )
 }
 
-/** The selected track's patterns: pick which one to edit, start a new one, or branch a variation. */
+/** Pointer travel before pressing a pattern letter counts as dragging it to the timeline. */
+const CHIP_DRAG_PX = 5
+
+/**
+ * The selected track's patterns: pick which one to edit, start a new one,
+ * branch a variation — and put the open one into the song, with the button or
+ * by dragging its letter onto the track's lane.
+ */
 function PatternPicker() {
   const trackId = useStudio((s) => s.selectedTrack)
   const openId = useStudio((s) => selTrack(s).patternId)
   const patterns = useStudio((s) => s.patterns)
   const clips = useStudio((s) => s.clips)
+  const drag = usePatternDrag((s) => s.drag)
+  const press = useRef<{ x: number; y: number } | null>(null)
   const mine = useMemo(
     () =>
       Object.values(patterns)
@@ -83,18 +95,44 @@ function PatternPicker() {
         .sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true })),
     [patterns, trackId]
   )
+  const uses = (id: string) => clips.filter((c) => c.patternId === id).length
+  const open = patterns[openId]
+  const openUnused = uses(openId) === 0
 
   return (
     <div className="pattern-picker">
       {mine.map((p) => {
-        const uses = clips.filter((c) => c.patternId === p.id).length
+        const count = uses(p.id)
+        const color = patternColor(p.name)
         return (
           <button
             key={p.id}
-            className={`pattern-chip ${p.id === openId ? 'active' : ''}`}
-            style={{ borderColor: patternColor(p.name), ...(p.id === openId ? { background: patternColor(p.name) } : {}) }}
+            className={`pattern-chip ${p.id === openId ? 'active' : ''} ${count === 0 ? 'unused' : ''}`}
+            style={{ borderColor: color, ...(p.id === openId ? { background: color } : {}) }}
             onClick={() => openPattern(p.id)}
-            {...tip(`Pattern ${p.name}`, `${uses === 0 ? 'Not on the timeline yet.' : `Played by ${uses} clip${uses === 1 ? '' : 's'} on the timeline — editing it changes all of them.`} The open pattern is what LOOP mode plays and what a double-click on the timeline drops in.`)}
+            onPointerDown={(e) => {
+              if (e.button !== 0) return
+              e.currentTarget.setPointerCapture(e.pointerId)
+              press.current = { x: e.clientX, y: e.clientY }
+            }}
+            onPointerMove={(e) => {
+              const from = press.current
+              if (!from) return
+              const dragging = usePatternDrag.getState().drag !== null
+              if (!dragging && Math.hypot(e.clientX - from.x, e.clientY - from.y) < CHIP_DRAG_PX) return
+              usePatternDrag.setState({ drag: { patternId: p.id, trackId, name: p.name, color, x: e.clientX, y: e.clientY } })
+            }}
+            onPointerUp={() => {
+              press.current = null
+              const dropped = usePatternDrag.getState().drag
+              usePatternDrag.setState({ drag: null })
+              if (dropped) dropPatternOnTimeline(dropped)
+            }}
+            onPointerCancel={() => {
+              press.current = null
+              usePatternDrag.setState({ drag: null })
+            }}
+            {...tip(`Pattern ${p.name}`, `${count === 0 ? 'Not in the song yet — press ＋ ADD TO SONG, or drag this letter up onto the track’s lane.' : `Played by ${count} clip${count === 1 ? '' : 's'} on the timeline — editing it changes all of them. Drag this letter onto the lane to place it again.`} The open pattern is what LOOP mode plays.`)}
           >
             {p.name}
           </button>
@@ -110,6 +148,18 @@ function PatternPicker() {
         <button className="mini-btn" onClick={deleteOpenPattern} {...tip('Delete pattern', 'Deletes this pattern and every clip on the timeline that plays it.')}>
           ✕
         </button>
+      )}
+      <button
+        className={`add-to-song ${openUnused ? 'nudge' : ''}`}
+        onClick={() => addPatternToSong()}
+        {...tip('Add to song', `Puts pattern ${open?.name ?? ''} on the timeline, right after this track’s last clip. Press it again to repeat the pattern. ${openUnused ? 'This pattern is not in the song yet, so SONG mode will not play it until you add it.' : ''} You can also drag the pattern’s letter onto the track’s lane to place it exactly where you want.`)}
+      >
+        ＋ ADD TO SONG
+      </button>
+      {drag && (
+        <div className="pattern-drag-chip" style={{ left: drag.x, top: drag.y, background: drag.color }}>
+          {drag.name}
+        </div>
       )}
     </div>
   )

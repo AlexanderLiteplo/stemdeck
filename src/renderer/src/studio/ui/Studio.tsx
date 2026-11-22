@@ -3,6 +3,7 @@ import { tip } from '../../components/TooltipLayer'
 import {
   editorPosition,
   matchDeckBpm,
+  redo,
   setBpm,
   setFocus,
   setMode,
@@ -12,8 +13,10 @@ import {
   toggleMetronome,
   togglePlay,
   toggleRecordArm,
-  transportPosition
+  transportPosition,
+  undo
 } from '../actions'
+import { useHistory } from '../history'
 import { selTrack, useStudio } from '../store'
 import { Arrangement } from './Arrangement'
 import { ChopEditor, NumberInput } from './ChopEditor'
@@ -76,6 +79,7 @@ function Transport() {
   const metronome = useStudio((s) => s.metronome)
   const mode = useStudio((s) => s.mode)
   const cycleOn = useStudio((s) => s.cycleOn)
+  const history = useHistory()
 
   return (
     <div className="transport-bar">
@@ -141,8 +145,20 @@ function Transport() {
         CLICK
       </button>
       <span className="spacer" />
-      <span className="kbd-hint" {...tip('Keyboard', 'Space = play/stop · Tab = switch track · the selected track decides what your keys play.')}>
-        ⌨ Space · Tab
+      <button className="mini-btn" disabled={history.undo === 0} onClick={undo} {...tip('Undo · ⌘Z', 'Takes back your last change to the song: notes, steps, clips, knobs, tracks, tempo. Up to 100 steps back.')}>
+        ↶ UNDO
+      </button>
+      <button className="mini-btn" disabled={history.redo === 0} onClick={redo} {...tip('Redo · ⇧⌘Z', 'Puts back what you just undid.')}>
+        ↷ REDO
+      </button>
+      <span
+        className="kbd-hint"
+        {...tip(
+          'Keyboard shortcuts',
+          'Space play/stop · Tab next track · Home playhead to bar 1 · ⌘Z undo · ⇧⌘Z redo. Timeline (click it first): ⌘C copy · ⌘X cut · ⌘V paste at playhead · ⌘D duplicate · ⌘T split at playhead · ⌘A select all · ⌫ delete · ← → nudge. Piano roll (click it first): ⌘C / ⌘X / ⌘V / ⌘D for notes · ⌘A select all · arrows nudge · ⌫ delete. Letter keys play the selected track.'
+        )}
+      >
+        ⌨ SHORTCUTS
       </span>
     </div>
   )
