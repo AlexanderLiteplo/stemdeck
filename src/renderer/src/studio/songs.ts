@@ -9,6 +9,9 @@ export interface SongMeta {
   id: string
   name: string
   savedAt: number
+  /** For the song list; missing on songs saved before these were recorded. */
+  bpm?: number
+  bars?: number
 }
 
 interface SavedSong extends SongMeta {
@@ -41,19 +44,28 @@ function write(): boolean {
 /** Saved songs, most recently saved first. */
 export function listSongs(): SongMeta[] {
   return Object.values(library)
-    .map(({ id, name, savedAt }) => ({ id, name, savedAt }))
+    .map(({ id, name, savedAt, bpm, bars }) => ({ id, name, savedAt, bpm, bars }))
     .sort((a, b) => b.savedAt - a.savedAt)
 }
 
 export function putSong(id: string, name: string, data: SongData): boolean {
-  library[id] = { id, name, savedAt: Date.now(), data }
+  const end = data.clips.reduce((max, c) => Math.max(max, c.start + c.length), 0)
+  library[id] = { id, name, savedAt: Date.now(), bpm: data.bpm, bars: Math.ceil(end / 16), data }
   return write()
+}
+
+export function renameSaved(id: string, name: string): void {
+  const saved = library[id]
+  if (!saved) return
+  saved.name = name
+  write()
 }
 
 /** A saved song ready to load, or null when it is missing or unreadable. */
 export function getSong(id: string): { name: string; data: SongData } | null {
   const saved = library[id]
-  const data = saved ? sanitizeSong(saved.data) : null
+  // A deep copy: the song about to be edited must never share objects with the stored one.
+  const data = saved ? sanitizeSong(structuredClone(saved.data)) : null
   return saved && data ? { name: saved.name, data } : null
 }
 

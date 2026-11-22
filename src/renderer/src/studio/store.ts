@@ -33,8 +33,10 @@ export interface StudioState extends SongData {
   /** The open song's id in the song library, and its name. */
   songId: string
   songName: string
-  /** The other songs in the library (the open one is saved there when you switch away). */
+  /** Every song in the library, the open one included (it saves itself as you work). */
   songs: SongMeta[]
+  /** The open song has changes not yet written to the library (autosave is a moment behind). */
+  songDirty: boolean
   /** Id of the track whose editor is open — also what the computer keyboard plays. */
   selectedTrack: string
   selectedClips: string[]
@@ -221,6 +223,7 @@ export const useStudio = create<StudioState>(() => ({
   songId: saved.songId ?? uid('song'),
   songName: saved.songName ?? 'My first song',
   songs: listSongs(),
+  songDirty: false,
   selectedTrack: song.tracks.some((t) => t.id === saved.selectedTrack)
     ? (saved.selectedTrack as string)
     : song.tracks[0].id,
