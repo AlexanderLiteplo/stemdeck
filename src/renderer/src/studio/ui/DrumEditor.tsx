@@ -15,6 +15,7 @@ import {
   updateKitBus
 } from '../actions'
 import { useStudio } from '../store'
+import { BUILTIN_SAMPLES, BUILTIN_PREFIX } from '../builtinSamples'
 import { DRUM_MODELS, DRUM_VOICES, type DrumModel, type DrumVoiceId } from '../types'
 import { Param, PresetBar, Seg, fmt } from './Param'
 import { usePadFlash } from './usePadFlash'
@@ -62,6 +63,43 @@ function droppedPath(e: React.DragEvent): string | null {
 const acceptsDrop = (e: React.DragEvent) =>
   e.dataTransfer.types.includes('Files') || e.dataTransfer.types.includes(TRACK_DND)
 
+/**
+ * Every recording that ships with the app, the ones made for this pad first.
+ * Choosing one puts it on the pad; it previews as it loads.
+ */
+function SoundPicker({ pad, current }: { pad: DrumVoiceId; current: string | null }) {
+  const fits = BUILTIN_SAMPLES.filter((s) => s.pads.includes(pad))
+  const others = BUILTIN_SAMPLES.filter((s) => !s.pads.includes(pad))
+  const builtin = current?.startsWith(BUILTIN_PREFIX) ? current : ''
+  return (
+    <select
+      className="sound-select"
+      value={builtin}
+      onChange={(e) => {
+        if (e.target.value) void loadDrumSample(pad, e.target.value)
+        e.target.blur()
+      }}
+      {...tip('Sound', `Real drum recordings that come with the app: a TR-808 recorded in 1994, and the uzu analog kit. The ones made for a ${DRUM_INFO[pad].label.toLowerCase()} are listed first. Picking one replaces the synthesized sound on this pad.`)}
+    >
+      <option value="">{builtin ? 'Pick a recording…' : `${current ? 'Your own sample' : 'Synthesized'} — pick a recording…`}</option>
+      <optgroup label={`For ${DRUM_INFO[pad].label.toLowerCase()}`}>
+        {fits.map((s) => (
+          <option key={s.path} value={s.path}>
+            {s.label}
+          </option>
+        ))}
+      </optgroup>
+      <optgroup label="Other sounds">
+        {others.map((s) => (
+          <option key={s.path} value={s.path}>
+            {s.label}
+          </option>
+        ))}
+      </optgroup>
+    </select>
+  )
+}
+
 export function DrumEditor() {
   const kit = useStudio((s) => s.kit)
   const userKits = useStudio((s) => s.userKits)
@@ -75,7 +113,7 @@ export function DrumEditor() {
   return (
     <div className="instrument drum-editor">
       <div className="instrument-head">
-        <span className="instrument-name" {...tip('Drum kit', 'Eight drums. Click a pad (or hit 1-2-3-4 / Q-W-E-R) to play it and pick it for editing. Choose its style (808, 909…), shape it with the knobs, or drop your own sample on it. PUNCH, CRUNCH and ROOM work on the whole kit.')}>
+        <span className="instrument-name" {...tip('Drum kit', 'Eight drums. Click a pad (or hit 1-2-3-4 / Q-W-E-R) to play it and pick it for editing. Each pad plays a real recording (pick one under SOUND), your own sample, or a synthesized drum (the style buttons). Shape it with the knobs; PUNCH, CRUNCH and ROOM work on the whole kit. The “Real drums” kits are recordings; the “Synthesized” ones are generated.')}>
           DRUMS
         </span>
         <PresetBar
@@ -87,7 +125,7 @@ export function DrumEditor() {
           onSave={saveUserKit}
           onDelete={deleteUserKit}
         />
-        <span className="drum-hint">Drop any WAV / MP3 on a pad to use your own sound</span>
+        <span className="drum-hint">Real recordings under SOUND · drop any WAV / MP3 on a pad to use your own</span>
       </div>
       <div className="drum-body">
         <div className="pad-grid cols-4">
@@ -130,7 +168,7 @@ export function DrumEditor() {
               labels={Object.fromEntries(DRUM_MODELS[selected].map((m) => [m, MODEL_INFO[m].label]))}
               value={voice.model}
               title={`${label} style`}
-              help={`${sampled ? 'A sample is loaded, so it plays instead of these. ' : ''}${DRUM_MODELS[selected].map((m) => `${MODEL_INFO[m].label}: ${MODEL_INFO[m].help}`).join(' ')}`}
+              help={`${sampled ? 'A recording is loaded, so it plays instead of these — pick a style to switch back to the synthesized drum. ' : 'Synthesized drum styles. '}${DRUM_MODELS[selected].map((m) => `${MODEL_INFO[m].label}: ${MODEL_INFO[m].help}`).join(' ')}`}
               onChange={(model) => {
                 updateDrumVoice(selected, { model, sample: null })
                 hitDrum(selected, 0.9)
@@ -147,25 +185,21 @@ export function DrumEditor() {
             <Param label="LEVEL" help="Volume of this drum in the kit." value={voice.level} min={0} max={1} defaultValue={0.8} format={fmt.pct} onChange={(v) => updateDrumVoice(selected, { level: v })} />
           </div>
           <div className="sample-line">
-            {voice.sample ? (
-              <>
-                <span className="sample-name" {...tip('Sample', voice.sample.path)}>♫ {voice.sample.name}</span>
-                <button className="mini-btn" onClick={() => void pickDrumSample(selected)}>REPLACE</button>
-                <button className="mini-btn" onClick={() => clearDrumSample(selected)} {...tip('Use the built-in sound', 'Removes the sample from this pad; it goes back to its built-in drum with the settings it had before.')}>
-                  ✕ BUILT-IN
-                </button>
-              </>
-            ) : (
-              <>
-                <span className="sample-empty">Built-in sound</span>
-                <button
-                  className="mini-btn"
-                  onClick={() => void pickDrumSample(selected)}
-                  {...tip('Load a sample', 'Use any sound file (a one-shot kick, snare, vocal chop…) on this pad instead of the built-in drum. You can also drag a file from Finder, or a track from your library, straight onto a pad.')}
-                >
-                  LOAD SAMPLE…
-                </button>
-              </>
+            <SoundPicker pad={selected} current={voice.sample?.path ?? null} />
+            {voice.sample && !voice.sample.path.startsWith(BUILTIN_PREFIX) && (
+              <span className="sample-name" {...tip('Your sample', voice.sample.path)}>♫ {voice.sample.name}</span>
+            )}
+            <button
+              className="mini-btn"
+              onClick={() => void pickDrumSample(selected)}
+              {...tip('Your own sound', 'Use any sound file (a one-shot kick, snare, vocal chop…) on this pad. You can also drag a file from Finder, or a track from your library, straight onto a pad.')}
+            >
+              FILE…
+            </button>
+            {voice.sample && (
+              <button className="mini-btn" onClick={() => clearDrumSample(selected)} {...tip('Use the synthesized sound', 'Switches this pad back to its synthesized drum (the style buttons above), with the settings it had before.')}>
+                ✕ SYNTH
+              </button>
             )}
           </div>
         </section>

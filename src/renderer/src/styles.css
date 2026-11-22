@@ -2597,8 +2597,16 @@ button:disabled {
   white-space: nowrap;
 }
 
-.sample-empty {
-  color: var(--dim);
+.sound-select {
+  max-width: 250px;
+  background: var(--bg);
+  color: var(--yellow);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .kit-tip {
