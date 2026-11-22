@@ -2502,6 +2502,113 @@ button:disabled {
   opacity: 0.55;
 }
 
+.cell {
+  position: relative;
+}
+
+/* A roll: small ticks, one per hit, so 2/3/4 read at a glance. */
+.roll-ticks {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 9px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  color: rgba(11, 13, 18, 0.75);
+  pointer-events: none;
+}
+
+.groove-select {
+  width: auto;
+  max-width: 220px;
+  background: #0f2a1a;
+  color: var(--green);
+  border: 1px solid #1f5c37;
+  border-radius: 5px;
+  padding: 4px 6px;
+  font: inherit;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  cursor: pointer;
+}
+
+.drum-hint {
+  margin-left: auto;
+  font-size: 10px;
+  color: var(--dim);
+}
+
+.pad-big {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 3px;
+}
+
+.pad-sound {
+  max-width: 100%;
+  padding: 0 6px;
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.5px;
+  color: var(--dim);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pad-big.sampled .pad-sound {
+  color: var(--yellow);
+}
+
+.pad-big.drop-over {
+  border-color: var(--green) !important;
+  box-shadow: 0 0 0 2px rgba(46, 230, 107, 0.35) inset;
+}
+
+.module-line.dimmed {
+  opacity: 0.4;
+}
+
+.sample-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 24px;
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+  font-size: 11px;
+}
+
+.sample-line .mini-btn {
+  margin-right: 0;
+}
+
+.sample-name {
+  max-width: 220px;
+  color: var(--yellow);
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sample-empty {
+  color: var(--dim);
+}
+
+.kit-tip {
+  margin: 2px 0 0;
+  max-width: 190px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--dim);
+}
+
 .playhead {
   position: absolute;
   top: -2px;

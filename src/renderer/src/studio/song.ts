@@ -5,6 +5,7 @@
  */
 import type { SongScale } from './chords'
 import { normalizePatch } from './patch'
+import { normalizeKit } from './kit'
 import { DRUM_KITS, cloneKit, defaultChopSettings, demoProject, type Project } from './presets'
 import type { ChopSettings, CycleRange, DrumKit } from './types'
 
@@ -83,7 +84,8 @@ export function sanitizeSong(value: unknown, fallback?: () => Project): SongData
     ...project,
     bpm: settings.bpm ?? 140,
     swing: settings.swing ?? 0,
-    kit: settings.kit ?? cloneKit(DRUM_KITS[0]),
+    // Kits saved before drum models existed are upgraded (factory kits are swapped for their new versions).
+    kit: settings.kit ? normalizeKit(settings.kit, DRUM_KITS) : cloneKit(DRUM_KITS[0]),
     chop: { ...defaultChopSettings(), ...settings.chop },
     chopTitle: settings.chopTitle ?? '',
     songKey: settings.songKey ?? 0,

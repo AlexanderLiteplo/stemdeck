@@ -1,12 +1,12 @@
 /** Ready-made songs to start from. Each call builds a fresh copy with its own ids. */
 import { DRUM_KITS, SYNTH_PRESETS, blankProject, cloneKit, clonePatch, defaultChopSettings, newPattern, uid } from './presets'
+import { writeDrumRows, type DrumRows } from './drumtext'
 import type { SongData } from './song'
 import {
   DRUM_TRACK,
   STEPS_PER_BAR,
   type Clip,
   type DrumPattern,
-  type DrumVoiceId,
   type NotePattern,
   type Pattern,
   type StudioTrack,
@@ -32,26 +32,8 @@ export function blankSong(): SongData {
   }
 }
 
-/** Velocity for each character of a step row: x = full hit, m = medium, o = soft ghost note. */
-const HIT: Record<string, number> = { x: 0.95, m: 0.7, o: 0.45 }
-
-/**
- * Write drum rows from text, one character per 16th, bars separated by spaces:
- *   kick: 'x.x.......xx.... x.x.......xx....'
- */
-function drumPattern(id: string, name: string, bars: 1 | 2 | 4, rows: Partial<Record<DrumVoiceId, string>>): DrumPattern {
-  const pattern = newPattern('drums', DRUM_TRACK, name, bars, id) as DrumPattern
-  for (const [voice, text] of Object.entries(rows) as [DrumVoiceId, string][]) {
-    const steps = text.replaceAll(' ', '')
-    // A row that is a character short silently shifts every later hit; fail loudly instead.
-    if (steps.length !== bars * STEPS_PER_BAR) {
-      throw new Error(`Pattern ${name} ${voice}: ${steps.length} steps written, ${bars * STEPS_PER_BAR} expected`)
-    }
-    steps.split('').forEach((char, step) => {
-      pattern.drums[voice][step] = HIT[char] ?? 0
-    })
-  }
-  return pattern
+function drumPattern(id: string, name: string, bars: 1 | 2 | 4, rows: DrumRows): DrumPattern {
+  return writeDrumRows(newPattern('drums', DRUM_TRACK, name, bars, id) as DrumPattern, rows)
 }
 
 function notePattern(id: string, trackId: string, name: string, bars: 1 | 2 | 4, notes: [step: number, note: number, length: number, velocity?: number][]): NotePattern {

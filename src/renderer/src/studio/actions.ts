@@ -10,6 +10,8 @@ import { randomPatch } from './chaos'
 import { chordNotes, chordPads, type SongScale } from './chords'
 import { carve, clampShift, clipEnd, splitClip } from './clips'
 import { clearHistory, takeRedo, takeUndo, withoutHistory } from './history'
+import { writeDrumRows } from './drumtext'
+import { GROOVES } from './grooves'
 import { DRUM_KITS, SYNTH_PRESETS, cloneKit, clonePatch, newPattern, uid } from './presets'
 import { SONG_KEYS, pickSong, type SongData } from './song'
 import { dropSong, getSong, listSongs, putSong, renameSaved } from './songs'
@@ -30,12 +32,14 @@ import {
 import {
   CHOP_PADS,
   DRUM_VOICES,
+  MAX_STEPS,
   STEPS_PER_BAR,
   type ChopSettings,
   type ChopSource,
   type Clip,
   type CycleRange,
   type DrumKit,
+  type DrumPattern,
   type DrumVoice,
   type DrumVoiceId,
   type Pattern,
@@ -88,6 +92,7 @@ function syncSong(): void {
   const s = get()
   for (const t of s.tracks) if (t.patch) studio.setPatch(t.id, t.patch)
   studio.setKit(s.kit)
+  loadKitSamples(s.kit)
   studio.setBpm(s.bpm)
   studio.setSwing(s.swing)
   studio.setChopSettings(s.chop)
@@ -528,7 +533,42 @@ export function setDrumStep(voice: DrumVoiceId, step: number, velocity: number):
   if (p.kind !== 'drums') return
   const row = [...p.drums[voice]]
   row[step] = velocity
-  commitPattern({ ...p, drums: { ...p.drums, [voice]: row } })
+  const next = { ...p, drums: { ...p.drums, [voice]: row } }
+  // A step switched off forgets its roll, so switching it back on is a plain hit.
+  if (velocity <= 0 && p.rolls?.[voice]?.[step]) next.rolls = withRoll(p.rolls, voice, step, 0)
+  commitPattern(next)
+}
+
+/** `rolls` with one step changed, copying only the row that changes. */
+function withRoll(rolls: DrumPattern['rolls'], voice: DrumVoiceId, step: number, count: number): DrumPattern['rolls'] {
+  const row = [...(rolls?.[voice] ?? Array<number>(MAX_STEPS).fill(0))]
+  row[step] = count
+  return { ...rolls, [voice]: row }
+}
+
+/**
+ * Right-click a drum step: single hit → roll of 2 → 3 → 4 → single again.
+ * An empty step becomes a roll of 2.
+ */
+export function cycleDrumRoll(voice: DrumVoiceId, step: number): void {
+  const p = selPattern(get())
+  if (p.kind !== 'drums') return
+  const on = (p.drums[voice][step] ?? 0) > 0
+  const current = p.rolls?.[voice]?.[step] ?? 0
+  const count = !on ? 2 : current >= 4 ? 0 : Math.max(2, current + 1)
+  const drums = on ? p.drums : { ...p.drums, [voice]: p.drums[voice].map((v, i) => (i === step ? 0.8 : v)) }
+  commitPattern({ ...p, drums, rolls: withRoll(p.rolls, voice, step, count) })
+}
+
+/** Replace the open drum pattern with one of the ready-made grooves. */
+export function applyGroove(grooveId: string): void {
+  const groove = GROOVES.find((g) => g.id === grooveId)
+  const p = selPattern(get())
+  if (!groove || p.kind !== 'drums') return
+  commitPattern(writeDrumRows(newPattern('drums', p.trackId, p.name, groove.bars, p.id) as DrumPattern, groove.rows))
+  const { bpm, kit } = get()
+  const hints = [Math.abs(bpm - groove.bpm) > 8 ? `~${groove.bpm} BPM` : null, kit.name !== groove.kit ? `the ${groove.kit} kit` : null].filter(Boolean)
+  showToast(`${groove.label} groove loaded into pattern ${p.name}${hints.length ? ` — sounds best with ${hints.join(' and ')}` : ''}. ⌘Z to undo.`)
 }
 
 export function setChopStep(pad: number, step: number, velocity: number): void {
@@ -583,7 +623,8 @@ export function duplicateBars(): void {
   const dup = (row: number[]) => row.map((v, i) => (i >= half && i < half * 2 ? row[i - half] : v))
   if (p.kind === 'drums') {
     const drums = Object.fromEntries(DRUM_VOICES.map((v) => [v, dup(p.drums[v])])) as typeof p.drums
-    commitPattern({ ...p, drums })
+    const rolls = p.rolls && Object.fromEntries(Object.entries(p.rolls).map(([v, row]) => [v, row && dup(row)]))
+    commitPattern({ ...p, drums, ...(rolls ? { rolls } : {}) })
   } else if (p.kind === 'chops') {
     commitPattern({ ...p, chops: p.chops.map(dup) })
   } else {
@@ -922,10 +963,89 @@ export function updateDrumVoice(id: DrumVoiceId, patch: Partial<DrumVoice>): voi
   set({ kit })
 }
 
+/** PUNCH / CRUNCH / ROOM: processing on the whole kit. */
+export function updateKitBus(patch: Partial<Pick<DrumKit, 'punch' | 'crunch' | 'room'>>): void {
+  const kit = { ...cloneKit(get().kit), ...patch }
+  studio.setKit(kit)
+  set({ kit })
+}
+
 export function loadKit(kit: DrumKit): void {
   const next = cloneKit(kit)
   studio.setKit(next)
   set({ kit: next })
+  loadKitSamples(next)
+}
+
+// ---------- Drum samples ----------
+
+/** Paths whose audio the engine already holds, and decodes in flight (so a path is only read once). */
+const decodedSamples = new Set<string>()
+const pendingSamples = new Map<string, Promise<boolean>>()
+
+function ensureSample(path: string): Promise<boolean> {
+  if (decodedSamples.has(path)) return Promise.resolve(true)
+  const pending =
+    pendingSamples.get(path) ??
+    (async () => {
+      try {
+        const buffer = await engine.decode(await window.stemdeck.readFile(path))
+        studio.setDrumSample(path, buffer)
+        decodedSamples.add(path)
+        return true
+      } catch {
+        return false
+      } finally {
+        pendingSamples.delete(path)
+      }
+    })()
+  pendingSamples.set(path, pending)
+  return pending
+}
+
+/** Decode every sample a kit uses. Pads whose file is missing keep playing their built-in sound. */
+function loadKitSamples(kit: DrumKit): void {
+  const used = DRUM_VOICES.map((id) => kit.voices[id].sample).filter((sample) => sample !== null)
+  if (!used.length) return
+  void Promise.all(used.map(async (sample) => ((await ensureSample(sample.path)) ? null : sample.name))).then((missing) => {
+    const names = missing.filter((name) => name !== null)
+    if (names.length) showToast(`Couldn't find ${names.join(', ')} — ${names.length === 1 ? 'that pad plays its' : 'those pads play their'} built-in sound`)
+  })
+}
+
+const AUDIO_FILE = /\.(wav|aiff?|mp3|flac|ogg|m4a|aac)$/i
+
+/** Put a sound file on a drum pad (it replaces the built-in sound until cleared). */
+export async function loadDrumSample(id: DrumVoiceId, path: string): Promise<void> {
+  const name = path.split(/[\\/]/).pop() ?? 'sample'
+  if (!AUDIO_FILE.test(name)) {
+    showToast(`${name} isn't an audio file — drop a WAV, AIFF, MP3, FLAC, OGG or M4A`)
+    return
+  }
+  if (!(await ensureSample(path))) {
+    showToast(`Couldn't load ${name}`)
+    return
+  }
+  const voice = get().kit.voices[id]
+  // A fresh sample starts neutral — the pad's synth settings (a short decay, a dark tone) would
+  // otherwise cut it off or muffle it. They are kept with the sample and come back when it is removed.
+  const synth = voice.sample?.synth ?? { tune: voice.tune, decay: voice.decay, tone: voice.tone, drive: voice.drive }
+  const neutral = voice.sample ? {} : { tune: 0, decay: 1, tone: 0.5, drive: 0 }
+  updateDrumVoice(id, { ...neutral, sample: { path, name, synth } })
+  set({ selectedDrum: id })
+  void engine.ctx.resume()
+  studio.triggerDrum(id, 0.9)
+}
+
+/** The LOAD SAMPLE button: pick a file with the system dialog. */
+export async function pickDrumSample(id: DrumVoiceId): Promise<void> {
+  const [path] = await window.stemdeck.openAudioDialog()
+  if (path) await loadDrumSample(id, path)
+}
+
+/** Back to the pad's built-in synthesized sound. */
+export function clearDrumSample(id: DrumVoiceId): void {
+  updateDrumVoice(id, { ...get().kit.voices[id].sample?.synth, sample: null })
 }
 
 export function saveUserKit(name: string): void {
