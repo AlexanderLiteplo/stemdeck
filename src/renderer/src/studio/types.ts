@@ -114,7 +114,38 @@ export interface SynthPatch {
 export const DRUM_VOICES = ['kick', 'snare', 'clap', 'hat', 'openhat', 'perc', 'crash', 'bass808'] as const
 export type DrumVoiceId = (typeof DRUM_VOICES)[number]
 
+/**
+ * Each drum slot can be synthesized in a few classic styles. The first one
+ * listed is the default for kits saved before models existed.
+ */
+export const DRUM_MODELS = {
+  kick: ['808', '909', 'boom', 'rumble'],
+  snare: ['808', '909', 'crack', 'fat'],
+  clap: ['808', 'big'],
+  hat: ['808', '909', 'shaker'],
+  openhat: ['808', '909'],
+  perc: ['rim', 'cowbell', 'conga', 'tom'],
+  crash: ['crash', 'ride'],
+  bass808: ['clean', 'dirty']
+} as const satisfies Record<DrumVoiceId, readonly string[]>
+
+export type DrumModel = (typeof DRUM_MODELS)[DrumVoiceId][number]
+
+/** A sound file played instead of the synthesized drum. */
+export interface DrumSample {
+  /** Absolute path on disk (read through the preload's readFile). */
+  path: string
+  /** File name, for display. */
+  name: string
+  /** The pad's built-in sound settings from before the sample, restored when it is removed. */
+  synth?: Pick<DrumVoice, 'tune' | 'decay' | 'tone' | 'drive'>
+}
+
 export interface DrumVoice {
+  /** Synthesis style; must be one of DRUM_MODELS[voice]. Ignored while a sample is loaded. */
+  model: DrumModel
+  /** User sample that replaces the synthesized sound, or null. */
+  sample: DrumSample | null
   /** Semitones relative to the voice's natural pitch, -24..24. */
   tune: number
   /** Length multiplier 0.1..4 (1 = the voice's natural decay). */
@@ -125,6 +156,8 @@ export interface DrumVoice {
   drive: number
   /** Output level 0..1. */
   level: number
+  /** Stereo position -1 (left) .. 1 (right). */
+  pan: number
   /** Send to the studio reverb 0..1. */
   reverb: number
 }
@@ -135,6 +168,12 @@ export interface DrumKit {
   /** Preset-menu section for factory kits. */
   group?: string
   voices: Record<DrumVoiceId, DrumVoice>
+  /** Drum-bus compression 0..1: glues the kit together and makes hits jump out. */
+  punch: number
+  /** Drum-bus saturation 0..1: tape/console grit on the whole kit. */
+  crunch: number
+  /** Short room ambience 0..1 on the whole kit (separate from the big reverb). */
+  room: number
 }
 
 export type ChopSource = 'mix' | 'vocals' | 'drums' | 'bass' | 'other' | 'instrumental'
@@ -192,6 +231,11 @@ export interface DrumPattern extends PatternBase {
   kind: 'drums'
   /** drums[voice][step] = velocity 0..1 (0 = off). Each array has MAX_STEPS entries. */
   drums: Record<DrumVoiceId, number[]>
+  /**
+   * rolls[voice][step] = how many evenly spaced hits that step plays (2..4,
+   * the trap hi-hat roll). Missing, 0 or 1 = a single hit.
+   */
+  rolls?: Partial<Record<DrumVoiceId, number[]>>
 }
 
 export interface ChopPattern extends PatternBase {
@@ -293,7 +337,14 @@ export interface StudioEngineApi {
   allNotesOff(trackId?: string): void
 
   // Drums
+  /** Re-renders only the voices whose sound settings changed. */
   setKit(kit: DrumKit): void
+  /**
+   * Register (or with null, forget) the decoded audio for a sample path. Kit
+   * voices whose `sample.path` matches play it; until it arrives they fall
+   * back to their synthesized model.
+   */
+  setDrumSample(path: string, buffer: AudioBuffer | null): void
   triggerDrum(id: DrumVoiceId, velocity?: number, when?: number): void
 
   // Chops

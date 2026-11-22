@@ -3,6 +3,8 @@ import { tip } from '../../components/TooltipLayer'
 import {
   addPattern,
   addPatternToSong,
+  applyGroove,
+  cycleDrumRoll,
   clearPattern,
   deleteOpenPattern,
   duplicateBars,
@@ -15,6 +17,7 @@ import {
   shiftRoll
 } from '../actions'
 import { selChops, selDrums, selPattern, selTrack, useStudio } from '../store'
+import { GROOVES } from '../grooves'
 import { CHOP_PADS, DRUM_VOICES, STEPS_PER_BAR } from '../types'
 import { dropPatternOnTimeline } from './Arrangement'
 import { PAD_COLORS, patternColor } from './colors'
@@ -26,7 +29,7 @@ import { Playhead } from './Playhead'
 import { noteName } from './SynthEditor'
 
 const TRACK_HELP = {
-  drums: 'Click a cell to place a hit, drag to paint a row. Alt-click places a soft (ghost) hit. Each column is a 16th note; bright columns are the beats.',
+  drums: 'Click a cell to place a hit, drag to paint a row. Alt-click places a soft (ghost) hit. Right-click a hit for a roll (2, 3 or 4 quick hits — trap hi-hats). Each column is a 16th note; bright columns are the beats. GROOVES loads a ready-made beat.',
   chops: 'Each row is one chop pad. Place chops on the grid to rearrange the sample into a new beat.',
   synth: 'Piano roll. Click empty grid to place a note, or drag a chord pad in. Drag across the grid to box-select (Shift adds). Drag a note to move the selection, drag either end to trim it, Alt-drag to copy. Arrows nudge (Shift = beat/octave). Delete, double-click or right-click removes.'
 }
@@ -44,6 +47,7 @@ export function Sequencer() {
           {kind === 'synth' ? 'PIANO ROLL' : 'STEPS'}
         </span>
         <PatternPicker />
+        {kind === 'drums' && <GroovePicker />}
         <Seg
           options={[1, 2, 4] as const}
           value={bars}
@@ -165,12 +169,38 @@ function PatternPicker() {
   )
 }
 
+/** Load a ready-made groove into the open drum pattern. */
+function GroovePicker() {
+  return (
+    <select
+      className="groove-select"
+      value=""
+      onChange={(e) => {
+        if (e.target.value) applyGroove(e.target.value)
+        e.target.blur()
+      }}
+      {...tip('Grooves', 'Replace this pattern with a classic beat from a style — boom bap, trap, house, jungle… — then make it yours. ⌘Z brings back what you had.')}
+    >
+      <option value="">GROOVES…</option>
+      {GROOVES.map((g) => (
+        <option key={g.id} value={g.id}>
+          {g.label} · {g.bpm} BPM
+        </option>
+      ))}
+    </select>
+  )
+}
+
 interface Row {
   key: string
   label: string
   color?: string
   values: number[]
   onPreview: () => void
+  /** Hits per step (2..4 = a roll); rows without rolls leave it out. */
+  rolls?: number[]
+  /** Right-click a step: cycle its roll. */
+  onRoll?: (step: number) => void
 }
 
 /** Shared paint state so a drag keeps adding (or erasing) across cells. */
@@ -200,12 +230,20 @@ function StepGrid({
           <div className="cells" style={{ gridTemplateColumns: `repeat(${steps}, 1fr)` }}>
             {Array.from({ length: steps }, (_, step) => {
               const v = row.values[step] ?? 0
+              const roll = v > 0 ? (row.rolls?.[step] ?? 0) : 0
               return (
                 <div
                   key={step}
-                  className={`cell ${step % 4 === 0 ? 'beat' : ''} ${step % 16 === 0 ? 'bar' : ''} ${v > 0 ? 'on' : ''} ${v > 0 && v < 0.75 ? 'soft' : ''}`}
+                  className={`cell ${step % 4 === 0 ? 'beat' : ''} ${step % 16 === 0 ? 'bar' : ''} ${v > 0 ? 'on' : ''} ${v > 0 && v < 0.75 ? 'soft' : ''} ${roll >= 2 ? 'roll' : ''}`}
                   style={v > 0 && row.color ? { background: row.color } : undefined}
+                  onContextMenu={(e) => {
+                    if (!row.onRoll) return
+                    e.preventDefault()
+                    row.onRoll(step)
+                    row.onPreview()
+                  }}
                   onPointerDown={(e) => {
+                    if (e.button !== 0) return
                     e.preventDefault()
                     paint = { value: v > 0 ? 0 : e.altKey ? 0.5 : 1 }
                     onSet(r, step, paint.value)
@@ -214,7 +252,9 @@ function StepGrid({
                   onPointerEnter={(e) => {
                     if (paint && e.buttons === 1 && v !== paint.value) onSet(r, step, paint.value)
                   }}
-                />
+                >
+                  {roll >= 2 && <span className="roll-ticks">{'|'.repeat(roll)}</span>}
+                </div>
               )
             })}
             <Playhead steps={steps} />
@@ -227,10 +267,16 @@ function StepGrid({
 
 function DrumGrid({ steps }: { steps: number }) {
   const drums = useStudio(selDrums)
+  const rolls = useStudio((s) => {
+    const p = selPattern(s)
+    return p.kind === 'drums' ? p.rolls : undefined
+  })
   const rows: Row[] = DRUM_VOICES.map((id) => ({
     key: id,
     label: DRUM_INFO[id].label,
     values: drums[id],
+    rolls: rolls?.[id],
+    onRoll: (step) => cycleDrumRoll(id, step),
     onPreview: () => hitDrum(id, 0.8)
   }))
   return <StepGrid rows={rows} steps={steps} onSet={(r, step, v) => setDrumStep(DRUM_VOICES[r], step, v)} />

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import { demoProject, newPattern, uid } from './presets'
+import { normalizeKit } from './kit'
+import { DRUM_KITS, demoProject, newPattern, uid } from './presets'
 import { DEFAULT_PATCH, normalizePatch } from './patch'
 import { sanitizeSong, type SongData } from './song'
 import { listSongs, type SongMeta } from './songs'
@@ -238,7 +239,7 @@ export const useStudio = create<StudioState>(() => ({
   tool: 'select',
   focus: 'editor',
   userPatches: (saved.userPatches ?? []).map(normalizePatch),
-  userKits: saved.userKits ?? [],
+  userKits: (saved.userKits ?? []).map((k) => normalizeKit(k, DRUM_KITS)),
   selectedDrum: 'kick',
   chopLoading: false,
   keyOctave: saved.keyOctave ?? 4,

@@ -7,8 +7,10 @@ import {
   type ChopSettings,
   type Clip,
   type DrumKit,
+  type DrumModel,
   type DrumPattern,
   type DrumVoice,
+  type DrumVoiceId,
   type NotePattern,
   type Pattern,
   type StudioTrack,
@@ -442,119 +444,144 @@ export const SYNTH_PRESETS: SynthPatch[] = [
   normalizePatch({ group: 'Blank' })
 ]
 
-const voice = (
+export const CLASSICS_GROUP = 'Classics'
+
+const v = (
+  model: DrumModel,
   tune: number,
   decay: number,
   tone: number,
   drive: number,
   level: number,
-  reverb: number
-): DrumVoice => ({ tune, decay, tone, drive, level, reverb })
+  pan = 0,
+  reverb = 0.04
+): DrumVoice => ({ model, sample: null, tune, decay, tone, drive, level, pan, reverb })
 
-const KITS: DrumKit[] = [
-  {
-    name: 'Donda Stadium',
-    description: 'Huge sparse arena drums with a deep kick, dark metal, a roomy clap, a towering crash, and a long clean 808.',
-    voices: {
-      kick: voice(-2, 1.35, 0.35, 0.18, 0.95, 0.18),
-      snare: voice(-1, 1.2, 0.5, 0.12, 0.82, 0.36),
-      clap: voice(-2, 1.45, 0.48, 0.1, 0.9, 0.52),
-      hat: voice(-3, 0.9, 0.34, 0.04, 0.58, 0.12),
-      openhat: voice(-4, 1.25, 0.38, 0.05, 0.62, 0.22),
-      perc: voice(-2, 1.1, 0.4, 0.1, 0.62, 0.28),
-      crash: voice(-3, 1.5, 0.58, 0.16, 0.82, 0.5),
-      bass808: voice(-2, 1.7, 0.38, 0.35, 0.92, 0.08)
-    }
-  },
-  {
-    name: 'Off The Grid Drill',
-    description: 'Tight drill drums pair a short punchy kick, crisp snare, bright hat rolls, and a heavily driven long 808.',
-    voices: {
-      kick: voice(1, 0.72, 0.68, 0.22, 0.95, 0.05),
-      snare: voice(2, 0.78, 0.86, 0.18, 0.9, 0.09),
-      clap: voice(1, 0.7, 0.82, 0.12, 0.72, 0.12),
-      hat: voice(3, 0.55, 0.94, 0.08, 0.68, 0.03),
-      openhat: voice(2, 0.72, 0.9, 0.1, 0.66, 0.05),
-      perc: voice(4, 0.65, 0.8, 0.12, 0.7, 0.06),
-      crash: voice(1, 0.85, 0.85, 0.15, 0.72, 0.14),
-      bass808: voice(-1, 1.6, 0.62, 0.6, 0.98, 0.02)
-    }
-  },
-  {
-    name: 'Jail Rock',
-    description: 'Rock-leaning electronic drums use driven shells, an assertive open hat, and a bright crash for live-band energy.',
-    voices: {
-      kick: voice(0, 0.95, 0.62, 0.35, 0.94, 0.12),
-      snare: voice(-1, 1.05, 0.72, 0.35, 0.94, 0.2),
-      clap: voice(-1, 0.9, 0.62, 0.2, 0.62, 0.2),
-      hat: voice(0, 0.9, 0.7, 0.16, 0.68, 0.08),
-      openhat: voice(0, 1.35, 0.76, 0.18, 0.82, 0.14),
-      perc: voice(-2, 0.9, 0.6, 0.28, 0.66, 0.12),
-      crash: voice(2, 1.35, 0.96, 0.24, 0.9, 0.28),
-      bass808: voice(0, 0.95, 0.7, 0.4, 0.75, 0.06)
-    }
-  },
-  {
-    name: 'Praise Gospel',
-    description: 'Warm gospel percussion blends a soft kick, layered claps, tambourine-bright hats, and a welcoming medium room.',
-    voices: {
-      kick: voice(-1, 0.88, 0.38, 0.08, 0.82, 0.2),
-      snare: voice(0, 0.95, 0.64, 0.08, 0.68, 0.3),
-      clap: voice(1, 1.18, 0.72, 0.1, 0.88, 0.38),
-      hat: voice(4, 0.58, 0.92, 0.04, 0.58, 0.22),
-      openhat: voice(3, 0.78, 0.88, 0.05, 0.64, 0.25),
-      perc: voice(5, 0.58, 0.92, 0.05, 0.7, 0.28),
-      crash: voice(1, 1.05, 0.84, 0.08, 0.72, 0.36),
-      bass808: voice(0, 1.05, 0.48, 0.16, 0.72, 0.12)
-    }
-  },
-  {
-    name: 'Warehouse 4x4',
-    group: ROBOT_GROUP,
-    description: 'Hard techno drums: a long distorted kick that rumbles into the next one, a dry clap, tight metallic hats, and a crushed ride-like crash.',
-    voices: {
-      kick: voice(-3, 1.9, 0.55, 0.7, 1, 0.3),
-      snare: voice(2, 0.6, 0.7, 0.45, 0.7, 0.1),
-      clap: voice(0, 0.8, 0.6, 0.3, 0.8, 0.22),
-      hat: voice(5, 0.5, 0.85, 0.2, 0.6, 0.02),
-      openhat: voice(4, 0.9, 0.8, 0.25, 0.66, 0.08),
-      perc: voice(-7, 1.4, 0.3, 0.6, 0.7, 0.35),
-      crash: voice(6, 0.7, 0.9, 0.5, 0.6, 0.2),
-      bass808: voice(-5, 0.7, 0.3, 0.75, 0.85, 0.15)
-    }
-  },
-  {
-    name: 'Jungle Break',
-    group: JUNGLE_GROUP,
-    description: 'Tight, fast breakbeat drums: a short punchy kick, a cracking snare that still reads as a ghost note when played soft, and crisp ride-style hats.',
-    voices: {
-      kick: voice(3, 0.55, 0.75, 0.3, 0.95, 0.04),
-      snare: voice(4, 0.85, 0.9, 0.35, 0.95, 0.14),
-      clap: voice(2, 0.6, 0.8, 0.2, 0.6, 0.15),
-      hat: voice(2, 0.7, 0.8, 0.1, 0.5, 0.05),
-      openhat: voice(1, 0.8, 0.7, 0.1, 0.5, 0.1),
-      perc: voice(7, 0.5, 0.8, 0.2, 0.6, 0.2),
-      crash: voice(0, 1.2, 0.7, 0.2, 0.6, 0.3),
-      bass808: voice(5, 0.9, 0.4, 0.3, 0.8, 0.02)
-    }
-  },
-  {
-    name: 'Moon Minimal',
-    description: 'Soft lo-fi minimal drums keep the kick muted, rim quiet, hats dull, and saturation nearly absent for open arrangements.',
-    voices: {
-      kick: voice(-4, 0.75, 0.2, 0.04, 0.7, 0.14),
-      snare: voice(-3, 0.72, 0.3, 0.03, 0.54, 0.18),
-      clap: voice(-3, 0.68, 0.28, 0.02, 0.46, 0.22),
-      hat: voice(-5, 0.62, 0.18, 0.01, 0.4, 0.08),
-      openhat: voice(-5, 0.72, 0.22, 0.01, 0.42, 0.12),
-      perc: voice(-4, 0.58, 0.26, 0.02, 0.36, 0.15),
-      crash: voice(-5, 0.72, 0.3, 0.03, 0.42, 0.24),
-      bass808: voice(-4, 1.15, 0.28, 0.08, 0.64, 0.06)
-    }
-  }
+const kit = (
+  name: string,
+  group: string,
+  description: string,
+  [punch, crunch, room]: [number, number, number],
+  voices: Record<DrumVoiceId, DrumVoice>
+): DrumKit => ({ name, group, description, voices, punch, crunch, room })
+
+/**
+ * Factory kits. Voices are rendered at full scale, so LEVEL does the
+ * balancing: kick loudest, hats and cymbals well under it, panned a little
+ * apart like a real kit. The first kit is what new songs start with.
+ */
+export const DRUM_KITS: DrumKit[] = [
+  kit('Classic 808', CLASSICS_GROUP, 'The Roland TR-808: boomy long kick, snappy tuned snare, the famous clap and cowbell, sizzling metal hats. Hip-hop, trap, electro.', [0.35, 0.1, 0.08], {
+    kick: v('808', 0, 1, 0.5, 0, 0.95),
+    snare: v('808', 0, 1, 0.5, 0, 0.75),
+    clap: v('808', 0, 1, 0.5, 0, 0.7, 0, 0.1),
+    hat: v('808', 0, 1, 0.55, 0, 0.45, 0.2),
+    openhat: v('808', 0, 1, 0.5, 0, 0.4, 0.25),
+    perc: v('cowbell', 0, 1, 0.5, 0, 0.45, -0.25),
+    crash: v('crash', 0, 1, 0.5, 0, 0.4, -0.15, 0.1),
+    bass808: v('clean', 0, 1.2, 0.5, 0.15, 0.85)
+  }),
+  kit('Classic 909', CLASSICS_GROUP, 'The Roland TR-909: punchy clicky kick, noisy snare, bright hats and ride. House, techno, garage.', [0.5, 0.2, 0.12], {
+    kick: v('909', 0, 1, 0.6, 0.1, 1),
+    snare: v('909', 0, 1, 0.6, 0, 0.8),
+    clap: v('808', 0, 1, 0.55, 0, 0.7, 0, 0.12),
+    hat: v('909', 0, 1, 0.6, 0, 0.45, 0.2),
+    openhat: v('909', 0, 1, 0.6, 0, 0.4, 0.25),
+    perc: v('rim', 0, 1, 0.5, 0, 0.5, -0.25),
+    crash: v('ride', 0, 1, 0.5, 0, 0.4, -0.2, 0.08),
+    bass808: v('clean', 0, 1, 0.5, 0.2, 0.8)
+  }),
+  kit('Boom Bap', CLASSICS_GROUP, 'Dusty 90s New York: a round, warm kick, a fat snare with body, dark hats, heavy bus compression and grit. Swing it 15–30 %.', [0.65, 0.5, 0.28], {
+    kick: v('boom', -1, 1.1, 0.45, 0.25, 1),
+    snare: v('fat', -1, 1, 0.4, 0.2, 0.85, 0, 0.08),
+    clap: v('big', -2, 1, 0.4, 0.1, 0.6, 0, 0.15),
+    hat: v('808', -3, 0.9, 0.3, 0.1, 0.42, 0.2),
+    openhat: v('808', -3, 0.9, 0.35, 0.1, 0.35, 0.25),
+    perc: v('rim', -2, 1, 0.4, 0.1, 0.5, -0.3),
+    crash: v('ride', -2, 1, 0.35, 0.1, 0.35, -0.2),
+    bass808: v('clean', 0, 1, 0.4, 0.2, 0.8)
+  }),
+  kit('Trap', CLASSICS_GROUP, 'Modern trap: a short punchy kick, a cracking snare, a big clap, bright hats made for rolls (right-click a hat step), and a long distorted 808.', [0.45, 0.3, 0.1], {
+    kick: v('808', 2, 0.55, 0.75, 0.2, 1),
+    snare: v('crack', 2, 1, 0.7, 0.1, 0.85, 0, 0.1),
+    clap: v('big', 0, 1, 0.6, 0, 0.8, 0, 0.18),
+    hat: v('808', 3, 0.8, 0.85, 0, 0.42, 0.2),
+    openhat: v('808', 2, 0.9, 0.8, 0, 0.38, 0.25),
+    perc: v('rim', 3, 1, 0.7, 0, 0.45, -0.25),
+    crash: v('crash', 0, 1, 0.7, 0, 0.4, -0.15, 0.12),
+    bass808: v('dirty', 0, 1.8, 0.45, 0.25, 0.85)
+  }),
+  kit('Jungle Break', JUNGLE_GROUP, 'Tight, fast breakbeat drums: a short punchy kick, a cracking snare that still reads as a ghost note when played soft, crisp hats and ride, a conga for rolls.', [0.7, 0.45, 0.22], {
+    kick: v('909', 3, 0.6, 0.75, 0.3, 0.95),
+    snare: v('crack', 4, 0.9, 0.85, 0.3, 0.95, 0, 0.1),
+    clap: v('808', 2, 0.7, 0.7, 0.2, 0.55),
+    hat: v('909', 2, 0.8, 0.75, 0.1, 0.42, 0.2),
+    openhat: v('909', 1, 0.8, 0.7, 0.1, 0.38, 0.25),
+    perc: v('conga', 5, 0.6, 0.6, 0.2, 0.55, -0.3, 0.15),
+    crash: v('ride', 0, 1.1, 0.6, 0.2, 0.4, -0.2, 0.2),
+    bass808: v('clean', 5, 0.9, 0.4, 0.3, 0.8)
+  }),
+  kit('Warehouse 4x4', ROBOT_GROUP, 'Hard techno: a long distorted kick that rumbles into the next one, a dry clap, tight metallic hats, a deep tom and a crushed ride.', [0.6, 0.45, 0.3], {
+    kick: v('rumble', -3, 1.2, 0.5, 0.6, 1),
+    snare: v('909', 2, 0.6, 0.7, 0.4, 0.65),
+    clap: v('big', 0, 0.9, 0.6, 0.3, 0.75, 0, 0.22),
+    hat: v('909', 5, 0.5, 0.85, 0.2, 0.42, 0.15),
+    openhat: v('909', 4, 0.8, 0.8, 0.25, 0.4, 0.3),
+    perc: v('tom', -5, 1.2, 0.3, 0.5, 0.55, -0.3, 0.3),
+    crash: v('ride', 6, 0.7, 0.9, 0.4, 0.4, -0.2, 0.2),
+    bass808: v('dirty', -5, 0.7, 0.3, 0.6, 0.7)
+  }),
+  kit('Donda Stadium', DONDA_GROUP, 'Huge sparse arena drums: a deep long kick, a fat snare and a clap drowned in the hall, dark hats, a towering crash and a long clean 808.', [0.4, 0.2, 0.25], {
+    kick: v('808', -2, 1.4, 0.35, 0.2, 1),
+    snare: v('fat', -1, 1.2, 0.5, 0.1, 0.8, 0, 0.35),
+    clap: v('big', -2, 1.4, 0.45, 0.1, 0.85, 0, 0.5),
+    hat: v('808', -3, 0.9, 0.35, 0, 0.4, 0.2, 0.1),
+    openhat: v('808', -4, 1.2, 0.4, 0, 0.38, 0.25, 0.2),
+    perc: v('conga', -2, 1.1, 0.4, 0.1, 0.5, -0.3, 0.25),
+    crash: v('crash', -3, 1.5, 0.55, 0.1, 0.45, -0.15, 0.45),
+    bass808: v('clean', -2, 1.7, 0.4, 0.35, 0.9)
+  }),
+  kit('Off The Grid Drill', DONDA_GROUP, 'UK/NY drill: a short kick, a tight cracking snare, bright hats for triplet rolls and a long, heavily driven 808.', [0.5, 0.3, 0.08], {
+    kick: v('808', 1, 0.6, 0.7, 0.2, 1),
+    snare: v('crack', 2, 0.8, 0.8, 0.15, 0.85, 0, 0.08),
+    clap: v('808', 1, 0.7, 0.8, 0.1, 0.65),
+    hat: v('808', 3, 0.55, 0.9, 0.05, 0.45, 0.2),
+    openhat: v('808', 2, 0.7, 0.85, 0.1, 0.4, 0.25),
+    perc: v('rim', 4, 0.7, 0.8, 0.1, 0.5, -0.25),
+    crash: v('crash', 1, 0.85, 0.85, 0.15, 0.4, -0.15),
+    bass808: v('dirty', -1, 1.6, 0.6, 0.5, 0.9)
+  }),
+  kit('Jail Rock', DONDA_GROUP, 'Rock-leaning drums: a driven boom kick and fat snare, an assertive open hat and a bright crash, all pushed hard into the bus.', [0.7, 0.6, 0.3], {
+    kick: v('boom', 0, 1, 0.6, 0.45, 1),
+    snare: v('fat', -1, 1.05, 0.7, 0.4, 0.9, 0, 0.2),
+    clap: v('big', -1, 0.9, 0.6, 0.2, 0.6),
+    hat: v('909', 0, 0.9, 0.6, 0.2, 0.45, 0.2),
+    openhat: v('909', 0, 1.3, 0.7, 0.2, 0.45, 0.25),
+    perc: v('tom', -2, 0.9, 0.6, 0.3, 0.55, -0.3),
+    crash: v('crash', 2, 1.3, 0.9, 0.3, 0.5, -0.15, 0.25),
+    bass808: v('clean', 0, 1, 0.6, 0.4, 0.75)
+  }),
+  kit('Praise Gospel', DONDA_GROUP, 'Warm gospel percussion: a soft kick, a big clap, a tambourine-like shaker, congas and a ride, in a welcoming room.', [0.4, 0.15, 0.3], {
+    kick: v('boom', -1, 0.9, 0.4, 0.1, 0.85),
+    snare: v('fat', 0, 1, 0.6, 0.1, 0.75, 0, 0.3),
+    clap: v('big', 1, 1.2, 0.7, 0.1, 0.85, 0, 0.38),
+    hat: v('shaker', 4, 0.6, 0.85, 0, 0.4, 0.2, 0.2),
+    openhat: v('808', 3, 0.8, 0.8, 0, 0.38, 0.25, 0.25),
+    perc: v('conga', 5, 0.6, 0.8, 0.05, 0.55, -0.3, 0.28),
+    crash: v('ride', 1, 1.05, 0.75, 0.1, 0.4, -0.2, 0.35),
+    bass808: v('clean', 0, 1.05, 0.45, 0.15, 0.75)
+  }),
+  kit('Moon Minimal', DONDA_GROUP, 'Soft lo-fi minimal drums: a muted kick, a quiet rim, dull shaker hats and almost no saturation, for open arrangements.', [0.25, 0.1, 0.2], {
+    kick: v('808', -4, 0.75, 0.2, 0.05, 0.8),
+    snare: v('808', -3, 0.7, 0.3, 0, 0.55, 0, 0.18),
+    clap: v('808', -3, 0.7, 0.3, 0, 0.45, 0, 0.22),
+    hat: v('shaker', -5, 0.6, 0.2, 0, 0.35, 0.15, 0.08),
+    openhat: v('808', -5, 0.7, 0.25, 0, 0.35, 0.2, 0.12),
+    perc: v('rim', -4, 0.6, 0.3, 0, 0.4, -0.25, 0.15),
+    crash: v('ride', -5, 0.7, 0.3, 0, 0.35, -0.2, 0.24),
+    bass808: v('clean', -4, 1.15, 0.3, 0.08, 0.7)
+  })
 ]
-
-export const DRUM_KITS: DrumKit[] = KITS.map((kit) => ({ group: DONDA_GROUP, ...kit }))
 
 export const uid = (prefix: string): string => `${prefix}-${Math.random().toString(36).slice(2, 8)}`
 

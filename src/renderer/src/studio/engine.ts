@@ -1,5 +1,6 @@
 import {
   CHOP_TRACK,
+  DRUM_MODELS,
   DRUM_TRACK,
   DRUM_VOICES,
   LOOP_STEPS,
@@ -18,6 +19,7 @@ import {
   type SynthPatch
 } from './types'
 import { DEFAULT_PATCH } from './patch'
+import { renderDrum } from './drumsynth'
 import { SynthInstrument } from './synth'
 
 const EPSILON = 0.0001
@@ -37,10 +39,16 @@ interface ActiveChop {
   stopped: boolean
 }
 
-interface ActiveOpenHat {
+interface ActiveDrum {
+  source: AudioBufferSourceNode
   output: GainNode
-  sources: AudioScheduledSourceNode[]
+  nodes: AudioNode[]
   stopped: boolean
+}
+
+interface RegisteredDrumSample {
+  source: AudioBuffer
+  prepared: AudioBuffer | null
 }
 
 const DEFAULT_CHOPS: ChopSettings = {
@@ -58,21 +66,27 @@ const DEFAULT_CHOPS: ChopSettings = {
 }
 
 const DEFAULT_DRUM: DrumVoice = {
+  model: '808',
+  sample: null,
   tune: 0,
   decay: 1,
   tone: 0.5,
   drive: 0,
   level: 0.8,
+  pan: 0,
   reverb: 0.1
 }
 
 const DEFAULT_KIT: DrumKit = {
   name: 'Default',
   description: 'Balanced synthesized drums.',
-  voices: Object.fromEntries(DRUM_VOICES.map((id) => [id, { ...DEFAULT_DRUM }])) as Record<
+  voices: Object.fromEntries(DRUM_VOICES.map((id) => [id, { ...DEFAULT_DRUM, model: DRUM_MODELS[id][0] }])) as Record<
     DrumVoiceId,
     DrumVoice
-  >
+  >,
+  punch: 0.4,
+  crunch: 0.15,
+  room: 0.12
 }
 
 function clamp(value: number, min: number, max: number): number {
@@ -109,6 +123,36 @@ function makeNoiseBuffer(ctx: AudioContext): AudioBuffer {
   return buffer
 }
 
+function makeDrumRoomImpulse(ctx: AudioContext): AudioBuffer {
+  const length = Math.floor(ctx.sampleRate * 0.45)
+  const impulse = ctx.createBuffer(2, length, ctx.sampleRate)
+  let state = 0x4d595df4
+  const random = (): number => {
+    state = (state + 0x6d2b79f5) | 0
+    let value = Math.imul(state ^ (state >>> 15), 1 | state)
+    value = (value + Math.imul(value ^ (value >>> 7), 61 | value)) ^ value
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296
+  }
+  const pole = Math.exp(-2 * Math.PI * 7000 / ctx.sampleRate)
+  const reflectionTimes = [0.007, 0.012, 0.019, 0.027, 0.034, 0.041]
+  for (let channel = 0; channel < 2; channel++) {
+    const data = impulse.getChannelData(channel)
+    let filtered = 0
+    for (let i = 0; i < length; i++) {
+      const t = i / ctx.sampleRate
+      const input = random() * 2 - 1
+      filtered = (1 - pole) * input + pole * filtered
+      data[i] = filtered * Math.exp(-t / 0.08) * 0.3
+    }
+    for (let i = 0; i < reflectionTimes.length; i++) {
+      const offset = (channel === 0 ? (i % 2) * 0.0007 : ((i + 1) % 2) * 0.0009)
+      const index = Math.min(length - 1, Math.round((reflectionTimes[i] + offset) * ctx.sampleRate))
+      data[index] += (i % 2 === channel ? 1 : -1) * (0.7 / (i + 1))
+    }
+  }
+  return impulse
+}
+
 export class StudioEngine implements StudioEngineApi {
   onStep: ((step: number) => void) | null = null
   onSongEnd: (() => void) | null = null
@@ -131,16 +175,26 @@ export class StudioEngine implements StudioEngineApi {
   private readonly synths = new Map<string, SynthInstrument>()
   private noiseBuffer: AudioBuffer | null = null
   private crusherLoaded = false
-  private readonly driveCurves = new Map<number, Float32Array<ArrayBuffer>>()
+  private readonly sampleDriveCurves = new Map<number, Float32Array<ArrayBuffer>>()
+  private readonly crunchCurves = new Map<number, Float32Array<ArrayBuffer>>()
 
   private readonly patches = new Map<string, SynthPatch>()
   private kit: DrumKit = structuredClone(DEFAULT_KIT)
+  private readonly drumBuffers = new Map<DrumVoiceId, AudioBuffer>()
+  private readonly drumBufferSignatures = new Map<DrumVoiceId, string>()
+  private readonly drumBufferSamples = new Map<DrumVoiceId, boolean>()
+  private readonly drumSamples = new Map<string, RegisteredDrumSample>()
+  private drumInput: GainNode | null = null
+  private drumCompressor: DynamicsCompressorNode | null = null
+  private drumCrunch: WaveShaperNode | null = null
+  private drumMakeup: GainNode | null = null
+  private drumRoomInput: GainNode | null = null
 
   private chopBuffer: AudioBuffer | null = null
   private chopSettings: ChopSettings = { ...DEFAULT_CHOPS }
   private readonly activeChops = new Set<ActiveChop>()
-  private openHat: ActiveOpenHat | null = null
-  private active808: ActiveOpenHat | null = null
+  private openHat: ActiveDrum | null = null
+  private active808: ActiveDrum | null = null
 
   private project: EngineProject | null = null
   private mode: PlayMode = 'loop'
@@ -211,6 +265,12 @@ export class StudioEngine implements StudioEngineApi {
 
     this.drumBus = this.createTrackBus()
     this.chopBus = this.createTrackBus()
+    this.createDrumMixBus()
+    for (const sample of this.drumSamples.values()) {
+      if (!sample.prepared) sample.prepared = this.prepareDrumSample(sample.source)
+    }
+    this.resolveDrumBuffers()
+    this.applyDrumBus()
     this.applyTrack(DRUM_TRACK, this.trackStates.get(DRUM_TRACK)!)
     this.applyTrack(CHOP_TRACK, this.trackStates.get(CHOP_TRACK)!)
     this.reconcileSynths()
@@ -224,6 +284,25 @@ export class StudioEngine implements StudioEngineApi {
     )
 
     this.retuneDelay(ctx.currentTime)
+  }
+
+  private createDrumMixBus(): void {
+    const ctx = this.ctx
+    const bus = this.drumBus
+    if (!ctx || !bus) return
+    this.drumInput = ctx.createGain()
+    this.drumCompressor = ctx.createDynamicsCompressor()
+    this.drumCrunch = ctx.createWaveShaper()
+    this.drumCrunch.oversample = '2x'
+    this.drumMakeup = ctx.createGain()
+    this.drumInput.connect(this.drumCompressor).connect(this.drumCrunch).connect(this.drumMakeup).connect(bus.dry)
+
+    this.drumRoomInput = ctx.createGain()
+    const room = ctx.createConvolver()
+    room.buffer = makeDrumRoomImpulse(ctx)
+    const roomReturn = ctx.createGain()
+    roomReturn.gain.value = 0.8
+    this.drumRoomInput.connect(room).connect(roomReturn).connect(bus.dry)
   }
 
   private createTrackBus(): TrackBus {
@@ -310,218 +389,154 @@ export class StudioEngine implements StudioEngineApi {
 
   setKit(kit: DrumKit): void {
     this.kit = structuredClone(kit)
+    this.resolveDrumBuffers()
+    this.applyDrumBus()
+  }
+
+  private resolveDrumBuffers(ids: readonly DrumVoiceId[] = DRUM_VOICES): void {
+    const ctx = this.ctx
+    if (!ctx) return
+    for (const id of ids) {
+      const voice = this.kit.voices[id] ?? { ...DEFAULT_DRUM, model: DRUM_MODELS[id][0] }
+      const path = voice.sample?.path
+      const registered = path ? this.drumSamples.get(path) : undefined
+      const sample = registered?.prepared
+      const signature = sample
+        ? `sample:${path}`
+        : `synth:${path ?? ''}:${voice.model}:${voice.tune}:${voice.decay}:${voice.tone}:${voice.drive}`
+      if (this.drumBufferSignatures.get(id) === signature) continue
+      if (sample) {
+        this.drumBuffers.set(id, sample)
+        this.drumBufferSamples.set(id, true)
+      } else {
+        const rendered = renderDrum(id, voice, ctx.sampleRate)
+        const buffer = ctx.createBuffer(1, rendered.length, ctx.sampleRate)
+        buffer.getChannelData(0).set(rendered)
+        this.drumBuffers.set(id, buffer)
+        this.drumBufferSamples.set(id, false)
+      }
+      this.drumBufferSignatures.set(id, signature)
+    }
+  }
+
+  setDrumSample(path: string, buffer: AudioBuffer | null): void {
+    if (buffer === null) this.drumSamples.delete(path)
+    else this.drumSamples.set(path, { source: buffer, prepared: this.ctx ? this.prepareDrumSample(buffer) : null })
+    const affected = DRUM_VOICES.filter((id) => this.kit.voices[id]?.sample?.path === path)
+    for (const id of affected) this.drumBufferSignatures.delete(id)
+    this.resolveDrumBuffers(affected)
+  }
+
+  private prepareDrumSample(source: AudioBuffer): AudioBuffer {
+    const ctx = this.ctx
+    if (!ctx) return source
+    const channels = Math.min(2, Math.max(1, source.numberOfChannels))
+    let first = source.length
+    let peak = 0
+    for (let i = 0; i < source.length; i++) {
+      for (let channel = 0; channel < channels; channel++) {
+        const value = Math.abs(source.getChannelData(channel)[i] ?? 0)
+        peak = Math.max(peak, value)
+        if (first === source.length && value > 0.001) first = i
+      }
+    }
+    const trim = Math.max(0, first === source.length ? 0 : first - Math.round(source.sampleRate * 0.001))
+    const length = Math.max(1, Math.min(source.length - trim, Math.floor(source.sampleRate * 4)))
+    const prepared = ctx.createBuffer(channels, length, source.sampleRate)
+    peak = 0
+    for (let channel = 0; channel < channels; channel++) {
+      const input = source.getChannelData(channel)
+      const output = prepared.getChannelData(channel)
+      for (let i = 0; i < length; i++) {
+        output[i] = input[trim + i] ?? 0
+        peak = Math.max(peak, Math.abs(output[i]))
+      }
+    }
+    const scale = peak > 0 ? 0.9 / peak : 1
+    const fade = Math.min(length, Math.ceil(source.sampleRate * 0.005))
+    for (let channel = 0; channel < channels; channel++) {
+      const output = prepared.getChannelData(channel)
+      for (let i = 0; i < length; i++) output[i] *= scale
+      for (let i = 0; i < fade; i++) output[length - fade + i] *= 1 - i / Math.max(1, fade - 1)
+    }
+    return prepared
   }
 
   triggerDrum(id: DrumVoiceId, velocity = 1, when?: number): void {
-    if (!this.ctx || !this.drumBus || !this.noiseBuffer) return
     const ctx = this.ctx
+    const bus = this.drumBus
+    const buffer = this.drumBuffers.get(id)
+    if (!ctx || !bus || !buffer || !this.drumInput || !this.drumRoomInput) return
+    const voice = this.kit.voices[id] ?? { ...DEFAULT_DRUM, model: DRUM_MODELS[id][0] }
     const time = Math.max(when ?? ctx.currentTime, ctx.currentTime)
-    const voice = this.kit.voices[id] ?? DEFAULT_DRUM
-    const tune = 2 ** (clamp(voice.tune, -24, 24) / 12)
-    const decay = clamp(voice.decay, 0.1, 4)
-    const tone = clamp(voice.tone, 0, 1)
-    const mix = ctx.createGain()
+    if (id === 'hat') this.chokeOpenHat(time)
+    if (id === 'bass808') this.choke808(time)
+
+    const source = ctx.createBufferSource()
+    source.buffer = buffer
     const output = ctx.createGain()
     output.gain.value = clamp(voice.level, 0, 1) * clamp(velocity, 0, 1)
-    const nodes: AudioNode[] = [mix, output]
-    const sources: AudioScheduledSourceNode[] = []
-    let lastDuration = 0.2
-
-    const routeSource = (source: AudioScheduledSourceNode, gain: GainNode): void => {
-      source.connect(gain)
-      gain.connect(mix)
-      sources.push(source)
-      nodes.push(source, gain)
-    }
-    const oscillator = (wave: OscillatorType, frequency: number, gainLevel: number, duration: number): OscillatorNode => {
-      const source = ctx.createOscillator()
-      source.type = wave
-      source.frequency.value = frequency
-      const gain = ctx.createGain()
-      routeSource(source, gain)
-      this.decayEnvelope(gain.gain, time, gainLevel, duration)
-      lastDuration = Math.max(lastDuration, duration)
-      return source
-    }
-    const noise = (gainLevel: number, duration: number): { source: AudioBufferSourceNode; gain: GainNode } => {
-      const source = ctx.createBufferSource()
-      source.buffer = this.noiseBuffer
-      source.loop = true
-      const gain = ctx.createGain()
-      routeSource(source, gain)
-      this.decayEnvelope(gain.gain, time, gainLevel, duration)
-      lastDuration = Math.max(lastDuration, duration)
-      return { source, gain }
-    }
-
-    if (id === 'kick') {
-      const body = oscillator('sine', 160 * tune, 1, 0.45 * decay)
-      body.frequency.setValueAtTime(160 * tune, time)
-      body.frequency.exponentialRampToValueAtTime(48 * tune, time + 0.06)
-      const click = noise(0.12 + tone * 0.32, 0.005)
-      const clickFilter = ctx.createBiquadFilter()
-      clickFilter.type = 'bandpass'
-      clickFilter.frequency.value = 1800 + tone * 3200
-      clickFilter.Q.value = 0.8
-      click.source.disconnect(click.gain)
-      click.source.connect(clickFilter).connect(click.gain)
-      nodes.push(clickFilter)
-    } else if (id === 'bass808') {
-      this.choke808(time)
-      const duration = 1.4 * decay
-      const fundamental = 49 * tune
-      const sine = oscillator('sine', fundamental * 1.06, 0.95, duration)
-      sine.frequency.exponentialRampToValueAtTime(fundamental, time + 0.045)
-      const triangle = oscillator('triangle', fundamental * 1.04, 0.13, duration * 0.9)
-      triangle.frequency.exponentialRampToValueAtTime(fundamental, time + 0.045)
-      const lowpass = ctx.createBiquadFilter()
-      lowpass.type = 'lowpass'
-      lowpass.frequency.value = 200 * 25 ** tone
-      mix.disconnect()
-      mix.connect(lowpass)
-      nodes.push(lowpass)
-      this.connectDrumOutput(lowpass, output, voice, nodes)
-    } else if (id === 'snare') {
-      const duration = 0.22 * decay
-      const body = oscillator('triangle', 230 * tune, 0.62 * (1.15 - tone * 0.35), duration * 0.75)
-      body.frequency.exponentialRampToValueAtTime(185 * tune, time + 0.035)
-      const hiss = noise(0.38 + tone * 0.55, duration)
-      const highpass = ctx.createBiquadFilter()
-      highpass.type = 'highpass'
-      highpass.frequency.value = 1200 + tone * 1000
-      const bandpass = ctx.createBiquadFilter()
-      bandpass.type = 'bandpass'
-      bandpass.frequency.value = 2500 + tone * 3500
-      bandpass.Q.value = 0.7
-      hiss.source.disconnect(hiss.gain)
-      hiss.source.connect(highpass).connect(bandpass).connect(hiss.gain)
-      nodes.push(highpass, bandpass)
-    } else if (id === 'clap') {
-      const duration = 0.3 * decay
-      const burst = noise(0.9, duration)
-      burst.gain.gain.cancelScheduledValues(time)
-      burst.gain.gain.setValueAtTime(EPSILON, time)
-      for (let i = 0; i < 3; i++) {
-        const start = time + i * 0.01
-        burst.gain.gain.linearRampToValueAtTime(0.85 - i * 0.12, start + 0.001)
-        burst.gain.gain.exponentialRampToValueAtTime(i === 2 ? 0.3 : 0.08, start + 0.007)
+    const panner = ctx.createStereoPanner()
+    panner.pan.value = clamp(voice.pan, -1, 1)
+    const nodes: AudioNode[] = [source, output, panner]
+    let tail: AudioNode = source
+    const isSample = this.drumBufferSamples.get(id) === true
+    let playbackRate = 1
+    if (isSample) {
+      playbackRate = 2 ** (clamp(voice.tune, -24, 24) / 12)
+      source.playbackRate.value = playbackRate
+      // TONE on a sample: 50 % = untouched, left darkens (lowpass), right adds air (high shelf).
+      const tone = clamp(voice.tone, 0, 1)
+      if (tone < 0.48 || tone > 0.52) {
+        const filter = ctx.createBiquadFilter()
+        if (tone < 0.5) {
+          filter.type = 'lowpass'
+          filter.frequency.value = clamp(400 * 2 ** ((tone / 0.5) * 5.6), 20, ctx.sampleRate * 0.45)
+        } else {
+          filter.type = 'highshelf'
+          filter.frequency.value = 3000
+          filter.gain.value = ((tone - 0.5) / 0.5) * 9
+        }
+        tail.connect(filter)
+        tail = filter
+        nodes.push(filter)
       }
-      burst.gain.gain.exponentialRampToValueAtTime(EPSILON, time + duration)
-      const bandpass = ctx.createBiquadFilter()
-      bandpass.type = 'bandpass'
-      bandpass.frequency.value = 700 * (2500 / 700) ** tone
-      bandpass.Q.value = 1.5
-      burst.source.disconnect(burst.gain)
-      burst.source.connect(bandpass).connect(burst.gain)
-      nodes.push(bandpass)
-    } else if (id === 'hat' || id === 'openhat') {
-      if (id === 'hat') this.chokeOpenHat(time)
-      const duration = (id === 'hat' ? 0.06 : 0.45) * decay
-      const metallic = ctx.createGain()
-      this.decayEnvelope(metallic.gain, time, 0.52, duration)
-      nodes.push(metallic)
-      for (const ratio of [2, 3, 4.16, 5.43, 6.79, 8.21]) {
-        const source = ctx.createOscillator()
-        source.type = 'square'
-        source.frequency.value = 40 * ratio * tune
-        source.connect(metallic)
-        sources.push(source)
-        nodes.push(source)
+      if (voice.drive >= 0.01) {
+        const shaper = ctx.createWaveShaper()
+        shaper.curve = this.getSampleDriveCurve(voice.drive)
+        shaper.oversample = '2x'
+        tail.connect(shaper)
+        tail = shaper
+        nodes.push(shaper)
       }
-      const hiss = ctx.createBufferSource()
-      hiss.buffer = this.noiseBuffer
-      hiss.loop = true
-      const hissGain = ctx.createGain()
-      hissGain.gain.value = 0.18 + tone * 0.22
-      hiss.connect(hissGain).connect(metallic)
-      sources.push(hiss)
-      nodes.push(hiss, hissGain)
-      const bandpass = ctx.createBiquadFilter()
-      bandpass.type = 'bandpass'
-      bandpass.frequency.value = 7000 + tone * 5000
-      bandpass.Q.value = 0.9
-      const highpass = ctx.createBiquadFilter()
-      highpass.type = 'highpass'
-      highpass.frequency.value = 5500 + tone * 2500
-      metallic.connect(bandpass).connect(highpass).connect(mix)
-      nodes.push(bandpass, highpass)
-      lastDuration = duration
-    } else if (id === 'perc') {
-      const duration = 0.12 * decay
-      const ping = oscillator('sine', 820 * tune, 0.9, duration)
-      ping.frequency.exponentialRampToValueAtTime(660 * tune, time + Math.min(0.025, duration * 0.5))
-      oscillator('triangle', 1230 * tune, 0.2, duration * 0.65)
-      const click = noise(0.12 + tone * 0.2, 0.008)
-      const highpass = ctx.createBiquadFilter()
-      highpass.type = 'highpass'
-      highpass.frequency.value = 2500
-      click.source.disconnect(click.gain)
-      click.source.connect(highpass).connect(click.gain)
-      nodes.push(highpass)
-    } else {
-      const duration = 1.8 * decay
-      const wash = noise(0.8, duration)
-      const metallic = ctx.createGain()
-      this.decayEnvelope(metallic.gain, time, 0.18, duration * 0.85)
-      nodes.push(metallic)
-      for (const ratio of [1, 1.34, 1.79, 2.47]) {
-        const source = ctx.createOscillator()
-        source.type = 'square'
-        source.frequency.value = 1500 * ratio * tune
-        source.connect(metallic)
-        sources.push(source)
-        nodes.push(source)
-      }
-      const highpass = ctx.createBiquadFilter()
-      highpass.type = 'highpass'
-      highpass.frequency.value = 3200 + tone * 2400
-      wash.source.disconnect(wash.gain)
-      wash.source.connect(highpass).connect(wash.gain)
-      metallic.connect(highpass)
-      nodes.push(highpass)
     }
+    tail.connect(output).connect(panner)
+    panner.connect(this.drumInput)
+    const reverbSend = ctx.createGain()
+    reverbSend.gain.value = clamp(voice.reverb, 0, 1)
+    panner.connect(reverbSend).connect(bus.reverb)
+    const roomSend = ctx.createGain()
+    roomSend.gain.value = clamp(this.kit.room, 0, 1) * (id === 'kick' || id === 'bass808' ? 0.35 : 1)
+    panner.connect(roomSend).connect(this.drumRoomInput)
+    nodes.push(reverbSend, roomSend)
 
-    if (id !== 'bass808') this.connectDrumOutput(mix, output, voice, nodes)
-    const end = time + lastDuration + 0.04
-    for (const source of sources) {
-      source.start(time)
+    const active: ActiveDrum = { source, output, nodes, stopped: false }
+    source.onended = () => {
+      for (const node of nodes) node.disconnect()
+      if (this.openHat === active) this.openHat = null
+      if (this.active808 === active) this.active808 = null
+    }
+    source.start(time)
+    if (isSample && voice.decay < 1) {
+      const playedLength = buffer.duration / playbackRate
+      const end = time + clamp(voice.decay, 0.1, 1) * playedLength
+      const hold = time + 0.7 * clamp(voice.decay, 0.1, 1) * playedLength
+      output.gain.setValueAtTime(output.gain.value, hold)
+      output.gain.linearRampToValueAtTime(0, end)
       source.stop(end)
     }
-    if (sources.length > 0) {
-      const cleanup = (): void => {
-        for (const node of nodes) node.disconnect()
-        if (this.openHat?.output === output) this.openHat = null
-        if (this.active808?.output === output) this.active808 = null
-      }
-      sources[0].onended = cleanup
-    }
-    if (id === 'openhat') this.openHat = { output, sources, stopped: false }
-    if (id === 'bass808') this.active808 = { output, sources, stopped: false }
-  }
-
-  private decayEnvelope(param: AudioParam, when: number, peak: number, duration: number): void {
-    param.setValueAtTime(EPSILON, when)
-    param.exponentialRampToValueAtTime(Math.max(EPSILON, peak), when + 0.0015)
-    param.exponentialRampToValueAtTime(EPSILON, when + Math.max(0.004, duration))
-  }
-
-  private connectDrumOutput(input: AudioNode, output: GainNode, voice: DrumVoice, nodes: AudioNode[]): void {
-    if (!this.drumBus || !this.ctx) return
-    let tail: AudioNode = input
-    if (voice.drive >= 0.01) {
-      const shaper = this.ctx.createWaveShaper()
-      shaper.curve = this.getDriveCurve(voice.drive)
-      shaper.oversample = '2x'
-      tail.connect(shaper)
-      tail = shaper
-      nodes.push(shaper)
-    }
-    tail.connect(output)
-    output.connect(this.drumBus.dry)
-    const send = this.ctx.createGain()
-    send.gain.value = clamp(voice.reverb, 0, 1)
-    output.connect(send).connect(this.drumBus.reverb)
-    nodes.push(send)
+    if (id === 'openhat') this.openHat = active
+    if (id === 'bass808') this.active808 = active
   }
 
   private chokeOpenHat(when: number): void {
@@ -530,12 +545,10 @@ export class StudioEngine implements StudioEngineApi {
     hat.stopped = true
     holdAt(hat.output.gain, when)
     hat.output.gain.exponentialRampToValueAtTime(EPSILON, when + 0.015)
-    for (const source of hat.sources) {
-      try {
-        source.stop(when + 0.02)
-      } catch {
-        // Already ended.
-      }
+    try {
+      hat.source.stop(when + 0.02)
+    } catch {
+      // Already ended.
     }
     this.openHat = null
   }
@@ -546,29 +559,58 @@ export class StudioEngine implements StudioEngineApi {
     bass.stopped = true
     holdAt(bass.output.gain, when)
     bass.output.gain.exponentialRampToValueAtTime(EPSILON, when + 0.02)
-    for (const source of bass.sources) {
-      try {
-        source.stop(when + 0.025)
-      } catch {
-        // Already ended.
-      }
+    try {
+      bass.source.stop(when + 0.025)
+    } catch {
+      // Already ended.
     }
     this.active808 = null
   }
 
-  private getDriveCurve(amount: number): Float32Array<ArrayBuffer> {
+  private getSampleDriveCurve(amount: number): Float32Array<ArrayBuffer> {
     const bucket = Math.round(clamp(amount, 0, 1) * 20)
-    const cached = this.driveCurves.get(bucket)
+    const cached = this.sampleDriveCurves.get(bucket)
     if (cached) return cached
     const curve = new Float32Array(1024)
-    const drive = 1 + bucket * 0.65
+    const drive = 1 + bucket * 0.35
     const normalizer = Math.tanh(drive)
     for (let i = 0; i < curve.length; i++) {
       const x = (i / (curve.length - 1)) * 2 - 1
       curve[i] = Math.tanh(x * drive) / normalizer
     }
-    this.driveCurves.set(bucket, curve)
+    this.sampleDriveCurves.set(bucket, curve)
     return curve
+  }
+
+  private applyDrumBus(): void {
+    const ctx = this.ctx
+    if (!ctx || !this.drumCompressor || !this.drumCrunch || !this.drumMakeup) return
+    const punch = clamp(this.kit.punch, 0, 1)
+    const crunch = clamp(this.kit.crunch, 0, 1)
+    const now = ctx.currentTime
+    this.drumCompressor.threshold.setTargetAtTime(-4 - 26 * punch, now, 0.015)
+    this.drumCompressor.ratio.setTargetAtTime(1 + 5 * punch, now, 0.015)
+    this.drumCompressor.knee.setTargetAtTime(6, now, 0.015)
+    this.drumCompressor.attack.setTargetAtTime(0.012, now, 0.015)
+    this.drumCompressor.release.setTargetAtTime(0.09 + 0.1 * (1 - punch), now, 0.015)
+    if (crunch < 0.01) this.drumCrunch.curve = null
+    else {
+      const bucket = Math.round(crunch * 20)
+      let curve = this.crunchCurves.get(bucket)
+      if (!curve) {
+        curve = new Float32Array(1024)
+        const gain = 1 + 5 * bucket / 20
+        const normalizer = Math.tanh(gain)
+        for (let i = 0; i < curve.length; i++) {
+          const x = i / (curve.length - 1) * 2 - 1
+          curve[i] = Math.tanh(x * gain) / normalizer
+        }
+        this.crunchCurves.set(bucket, curve)
+      }
+      this.drumCrunch.curve = curve
+    }
+    const makeup = (1 + 0.9 * punch) / (1 + 0.6 * crunch)
+    this.drumMakeup.gain.setTargetAtTime(makeup, now, 0.015)
   }
 
   setChopBuffer(buffer: AudioBuffer | null): void {
@@ -886,7 +928,16 @@ export class StudioEngine implements StudioEngineApi {
       for (const id of DRUM_VOICES) {
         const steps = pattern.drums?.[id]
         const velocity = Array.isArray(steps) ? steps[local] : 0
-        if (Number.isFinite(velocity) && velocity > 0) this.triggerDrum(id, velocity, when)
+        if (!Number.isFinite(velocity) || velocity <= 0) continue
+        const requested = pattern.rolls?.[id]?.[local]
+        const roll = typeof requested === 'number' && Number.isFinite(requested) && Number.isInteger(requested) && requested >= 2
+          ? Math.min(4, requested)
+          : 1
+        for (let hit = 0; hit < roll; hit++) {
+          const offsetSteps = hit / roll
+          if (remainingClipSteps !== undefined && offsetSteps >= remainingClipSteps) break
+          this.triggerDrum(id, hit === 0 ? velocity : velocity * 0.85, when + offsetSteps * stepDuration)
+        }
       }
       return
     }

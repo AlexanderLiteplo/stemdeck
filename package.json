@@ -15,7 +15,7 @@
     "build": "npm run build:worklet && electron-vite build",
     "start": "npm run build && electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "test": "esbuild src/renderer/src/studio/clips.test.ts src/renderer/src/studio/templates.test.ts --bundle --platform=node --format=esm --outdir=out/test --out-extension:.js=.mjs --log-level=warning && node out/test/clips.test.mjs && node out/test/templates.test.mjs",
+    "test": "esbuild src/renderer/src/studio/clips.test.ts src/renderer/src/studio/templates.test.ts src/renderer/src/studio/drumsynth.test.ts --bundle --platform=node --format=esm --outdir=out/test --out-extension:.js=.mjs --log-level=warning && node out/test/clips.test.mjs && node out/test/templates.test.mjs && node out/test/drumsynth.test.mjs",
     "icon": "electron scripts/make-icon.cjs",
     "dist": "npm run build && electron-builder --mac"
   },
